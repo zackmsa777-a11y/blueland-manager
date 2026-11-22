@@ -1,5 +1,6 @@
 'use strict';
 
+const {createHash}=require('node:crypto');
 const {PermissionFlagsBits:P}=require('discord.js');
 const {catalog,RuleError}=require('./ladder');
 const {requestCodex}=require('./codex-worker-client');
@@ -52,13 +53,13 @@ function createCodexHandler({store,isAdmin,ask=requestCodex,workspace=a=>request
   publish=a=>requestCodex(a,'/run/blueland-publish.sock'),vps=vpsService,run}) {
   const busy=new Set();
   const activeTasks=new Set();
-  return async function handle(message) {
+  async function handle(message,recovery) {
     if (message.guildId!==catalog.guildId || message.author.bot || message.webhookId || message.system) return false;
-    const text=message.content.trim(), actor=message.author.id, channel=message.channelId;
+    const text=recovery?'+code كمل':message.content.trim(), actor=message.author.id, channel=message.channelId;
     const me=message.client.user.id;
     const mention=new RegExp('<@!?'+me+'>','g');
     const mentioned=text.includes('<@'+me+'>')||text.includes('<@!'+me+'>');
-    const ref=message.reference;
+    const ref=recovery?null:message.reference;
     const replyRef=ref?.messageId && ref.channelId===channel && (!ref.guildId||ref.guildId===catalog.guildId) && (!ref.type||ref.type===0);
     const typed=text.match(/^\+([^\s]+)(?:\s+([\s\S]*))?$/u);
     const name=typed?.[1].normalize('NFC').toLowerCase();
@@ -69,8 +70,9 @@ function createCodexHandler({store,isAdmin,ask=requestCodex,workspace=a=>request
     const publishDraft=['انشر','انشر التعديلات','+نشر','+vps deploy'].includes(text.replace(mention,'').trim());
     const input=text.replace(mention,'').trim();
     const continuing=isContinuation(input)||name==='code'&&isContinuation(typed[2]||'');
-    const ownPending=continuing&&!replyRef?store.latestTask(actor,channel):null;
-    const direct=publishDraft||modelCommand||vpsCommand||historyCommand||name==='memory'||name==='code'||Boolean(ownPending);
+    const stopping=/^(?:وقف المهمة|أوقف المهمة|اوقف المهمة|إيقاف المهمة|stop task)$/iu.test(input);
+    const ownPending=recovery?store.taskFor(recovery.task,channel):continuing&&!replyRef?store.latestTask(actor,channel):null;
+    const direct=stopping||publishDraft||modelCommand||vpsCommand||historyCommand||name==='memory'||name==='code'||Boolean(ownPending);
     const recipe=name?store.feature(name):null;
     if (!direct&&!recipe&&!mentioned&&replyRef&&message.mentions?.repliedUser&&message.mentions.repliedUser.id!==me) return false;
     if (!mentioned&&!replyRef&&!direct&&!recipe) return false;
@@ -79,7 +81,10 @@ function createCodexHandler({store,isAdmin,ask=requestCodex,workspace=a=>request
     try {
       const authorized=await isAdmin(actor);
       const guide=!authorized && (mentioned||replyRef) && memberGuide(input);
-      if (!authorized && !guide) return true;
+      if (!authorized && !guide) {
+        if (recovery) store.finish(message.id,'permission-revoked');
+        return true;
+      }
       let previous;
       if (replyRef && (!message.mentions?.repliedUser || message.mentions.repliedUser.id===me)) {
         const parent=await message.fetchReference().catch(()=>null);
@@ -92,8 +97,18 @@ function createCodexHandler({store,isAdmin,ask=requestCodex,workspace=a=>request
         }
         return true;
       }
-      if (!store.begin(message.id,actor)) return true;
+      if (recovery) {
+        if (!ownPending?.active || busy.has(actor) || activeTasks.has(recovery.task) ||
+            !store.runningTasks().some(row=>row.message===message.id && row.actor===actor && row.task===recovery.task)) return true;
+      } else if (!store.begin(message.id,actor)) return true;
       recorded=true;
+      if (stopping) {
+        const pending=store.latestTask(actor,channel);
+        if (pending) store.endTask(pending.id);
+        store.finish(message.id,'done');
+        await reply(pending?'أوقفت مهمتك. التعديلات محفوظة.':'ما عندك مهمة برمجية مفتوحة في هذا الروم.');
+        return true;
+      }
       if (busy.has(actor)||busy.size>=4) throw new RuleError('هناك طلب Codex قيد التنفيذ. حاول بعد انتهائه.');
       busy.add(actor); acquired=true;
       const reviewConfirmation=previous?.content?.startsWith('مراجعة نشر BlueLand · ') && /^(?:تأكيد|confirm)$/iu.test(input);
@@ -217,8 +232,9 @@ function createCodexHandler({store,isAdmin,ask=requestCodex,workspace=a=>request
         if (!input&&!recipe) { await reply('اكتب طلبك مع المنشن أو بالرد على هذه الرسالة.');store.finish(message.id,'done');return true; }
         await message.channel.sendTyping().catch(()=>{});
         const g=message.guild;
-        if (continuing) {
-          const anchor=previous?.reference?.messageId;
+        const anchor=previous?.reference?.messageId;
+        const answering=Boolean(anchor && store.delivery(anchor)?.status==='needs-input');
+        if (continuing || answering) {
           let linked=anchor?store.taskFor(anchor,channel):ownPending;
           if (!linked && anchor && previous.content==='وصلت إلى حد خطوات الطلب. اطلب المتابعة لاستكمال العمل.') {
             const old=store.delivery(anchor);
@@ -234,7 +250,9 @@ function createCodexHandler({store,isAdmin,ask=requestCodex,workspace=a=>request
           if (linked) {
             if (activeTasks.has(linked.id)) throw new RuleError('المهمة قيد التنفيذ بالفعل.');
             task=linked;lockedTask=task.id;activeTasks.add(task.id);
+            if (answering && !continuing) store.clarify(task,input);
             store.linkTask(message.id,task.id);
+            store.finish(message.id,'working');
           }
         }
         const resuming=Boolean(task);
@@ -270,32 +288,42 @@ function createCodexHandler({store,isAdmin,ask=requestCodex,workspace=a=>request
           // Re-plan tool use from the authenticated request without surrounding user messages.
           if (result.actions.length) result=await ask(request);
         } else result=source?await runFeature(source,{args:request.prompt,...request.context}):await ask(request);
-        for (let round=0;inspectActions(result.actions).some(a=>a.op.startsWith('workspace_'));round++) {
+        const seen=new Set();
+        let repeated=0;
+        while (inspectActions(result.actions).some(a=>a.op.startsWith('workspace_'))) {
           if (!result.actions.every(a=>a.op.startsWith('workspace_'))) throw new RuleError('قسّم تعديل المشروع وإجراءات ديسكورد إلى طلبين.');
           if (!task) {
             task=store.startTask(message.id,actor,channel,request.prompt);
             lockedTask=task.id;activeTasks.add(task.id);
+            store.finish(message.id,'working');
           }
+          request.context.operations=workspaceOps;
           request.taskCheckpoint=task.progress;
-          if (round>=24||observations.length+result.actions.length>72) {
-            store.finish(message.id,'paused');
-            await progress.show('Paused');
-            await reply('حفظت تقدّم المهمة. ردّ على هذه الرسالة بـ «كمل» لأتابع من الملفات الموجودة.');
-            return true;
-          }
+          store.savePlan(task,result.workSummary);
+          let learned=false;
           for (const a of result.actions) {
             if (!await isAdmin(actor)) throw new RuleError('تغيّرت صلاحية الوصول.');
+            if (!store.taskFor(task.id,channel)?.active) {store.finish(message.id,'stopped');await progress.show('Stopped');return true;}
             const op=a.op.slice('workspace_'.length);
             await progress.show(op+' '+a.target.slice(0,100)+'…');
             const outcome=await workspace({op,target:a.target,value:a.value,extra:a.extra});
             if (outcome.edited) progress.file(outcome.edited);
             if (outcome.ran) progress.command();
-            store.recordStep(task,op,a.target,outcome);
-            observations.push({op,target:a.target,...outcome,text:String(outcome.text).slice(-4800)});
+            store.recordStep(task,op,a.target,outcome,a.value);
+            const signature=createHash('sha256').update(JSON.stringify([op,a.target,a.value,a.extra,outcome])).digest('hex');
+            if (!seen.has(signature)) learned=true;
+            if (seen.size>=512) seen.delete(seen.values().next().value);
+            seen.add(signature);
+            observations.push({op,target:a.target,line:op==='read'?(Number(a.value)||1):undefined,
+              file:op==='command'&&a.target==='check'?a.value:undefined,...outcome,text:String(outcome.text).slice(0,5200)});
+            if (observations.length>10) observations.shift();
           }
+          repeated=learned?0:repeated+1;
+          if (repeated>=5) throw new RuleError('توقفت لأن Codex كرّر نفس الخطوات خمس جولات من غير نتيجة جديدة. آخر خطوة: '+result.actions.at(-1).op+' '+result.actions.at(-1).target);
           if (!await isAdmin(actor)) throw new RuleError('تغيّرت صلاحية الوصول.');
           await progress.show('Thinking…');
-          const turn={...request,workspaceResults:observations.slice(-10)};
+          const turn={...request,workspaceResults:observations.slice()};
+          if (repeated>=2) turn.planCorrection='The same operations returned the same results. Use a different approach or explain the specific blocker.';
           result=await ask(turn);
           try {inspectActions(result.actions);}
           catch (error) {
@@ -305,10 +333,16 @@ function createCodexHandler({store,isAdmin,ask=requestCodex,workspace=a=>request
         }
         if (!await isAdmin(actor)) {store.finish(message.id,'permission-revoked');await progress.show('Access changed');return true;}
         actions=inspectActions(result.actions);
-        if (resuming && actions.length) throw new RuleError('هذه متابعة لمهمة برمجية. اطلب إجراءات ديسكورد أو النشر في رسالة مستقلة.');
+        if (task && !store.taskFor(task.id,channel)?.active) {store.finish(message.id,'stopped');await progress.show('Stopped');return true;}
+        if (task && actions.length) throw new RuleError('هذه مهمة برمجية. اطلب إجراءات ديسكورد أو النشر في رسالة مستقلة.');
         finalText=String(result.answer||'').trim();
         if (!actions.length) {
           const answer=String(result.answer||'وضّح الطلب.').trim();
+          if (task && result.needsInput) {
+            store.savePlan(task,result.workSummary);
+            await progress.show('Awaiting reply');
+            await reply(answer.slice(0,1900));store.finish(message.id,'needs-input');return true;
+          }
           await progress.finish();
           for (let i=0;i<Math.min(answer.length,7800);i+=1900) await reply(answer.slice(i,i+1900));
           if (task) store.endTask(task.id);
@@ -364,10 +398,25 @@ function createCodexHandler({store,isAdmin,ask=requestCodex,workspace=a=>request
       if (recorded) {
         const detail=error instanceof RuleError?error.message:'تعذّر إكمال طلب Codex.';
         const pending=task && store.taskFor(task.id,channel)?.active;
-        await reply(detail+(pending?' حُفظ التقدّم. ردّ بـ «كمل» للمتابعة.':'')).catch(()=>{});
+        await reply(detail+(pending?' التعديلات والتقدّم محفوظان.':'')).catch(()=>{});
       }
       return true;
     } finally { if (lockedTask) activeTasks.delete(lockedTask);if (acquired) busy.delete(actor); }
+  }
+  const recovering=new Set();
+  handle.recover=async loadMessage=>{
+    for (const row of store.runningTasks()) {
+      if (activeTasks.has(row.task)||busy.has(row.actor)||recovering.has(row.task)) continue;
+      recovering.add(row.task);
+      try {
+        const message=await loadMessage(row.channel,row.message);
+        if (message?.id===row.message && message.author.id===row.actor && message.channelId===row.channel &&
+            message.guildId===catalog.guildId && !message.author.bot && !message.webhookId && !message.system) await handle(message,row);
+      } catch (err) {
+        if ([10003,10008,50001,50013].includes(err.code)) store.finish(row.message,'source-unavailable');
+      } finally {recovering.delete(row.task);}
+    }
   };
+  return handle;
 }
 module.exports={createCodexHandler};

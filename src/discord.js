@@ -130,8 +130,13 @@ function connectDiscord(store, env) {
         connection = { code: 'online', text: 'البوت متصل', slashReady:0, slashTotal:commands.length, contentEnabled, membersEnabled };
         recover().catch(() => {});
         sync().catch(()=>{});
+        const resumeCoding=()=>codex.recover(async (channel,id)=>{
+          const room=await readyGuild().channels.fetch(channel);
+          return room.messages.fetch({message:id,cache:false});
+        }).catch(()=>{});
+        resumeCoding();
         clearInterval(timer);
-        timer = setInterval(() => { recover().catch(() => {}); sync().catch(()=>{}); }, 60_000);
+        timer = setInterval(() => { recover().catch(() => {}); sync().catch(()=>{}); resumeCoding(); }, 60_000);
         timer.unref();
       });
       client.on(api.Events.Error, () => {});

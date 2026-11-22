@@ -30,11 +30,30 @@ function openCodexStore(db) {
     latestTask(actor,channel) {
       return task(db.prepare('SELECT * FROM codex_workspace_tasks WHERE active=1 AND actor=? AND channel=? ORDER BY updated DESC,rowid DESC LIMIT 1').get(actor,channel));
     },
+    runningTasks() {
+      return db.prepare(`SELECT t.id AS task,t.channel,d.id AS message,d.actor FROM codex_workspace_tasks t
+        JOIN codex_deliveries d ON d.id=(SELECT dd.id FROM codex_deliveries dd
+          WHERE dd.id=t.id OR dd.id IN (SELECT message FROM codex_workspace_turns WHERE task=t.id)
+          ORDER BY dd.created DESC,dd.rowid DESC LIMIT 1)
+        WHERE t.active=1 AND d.status IN ('working','paused') ORDER BY t.updated`).all();
+    },
     linkTask(message,id) {db.prepare('INSERT OR IGNORE INTO codex_workspace_turns VALUES(?,?)').run(message,id);},
-    recordStep(task,op,target,outcome) {
+    clarify(task,text) {
+      const prompt=task.prompt+'\n\nتوضيح من المسؤول: '+text;
+      if (prompt.length>24000) throw new RuleError('تجاوزت تفاصيل المهمة السعة المتاحة. افتح طلبًا مستقلًا للجزء الجديد.');
+      db.prepare('UPDATE codex_workspace_tasks SET prompt=?,updated=? WHERE id=? AND active=1').run(prompt,Date.now(),task.id);
+      task.prompt=prompt;
+    },
+    savePlan(task,plan) {
+      if (typeof plan!=='string' || !plan.trim()) return;
+      task.progress.plan=plan.trim().slice(0,1800);
+      db.prepare('UPDATE codex_workspace_tasks SET progress=?,updated=? WHERE id=?').run(JSON.stringify(task.progress),Date.now(),task.id);
+    },
+    recordStep(task,op,target,outcome,value='') {
       const state=task.progress;
       if (outcome.edited && !state.files.includes(outcome.edited)) state.files=[...state.files,outcome.edited].slice(-100);
-      state.steps.push({op,target:target.slice(0,200),edited:outcome.edited||undefined,exit:outcome.exit,error:outcome.error||undefined});
+      state.steps.push({op,target:target.slice(0,200),line:op==='read'?(Number(value)||1):undefined,
+        file:op==='command'&&target==='check'?value:undefined,edited:outcome.edited||undefined,exit:outcome.exit,error:outcome.error||undefined});
       state.steps=state.steps.slice(-24);
       db.prepare('UPDATE codex_workspace_tasks SET progress=?,updated=? WHERE id=?').run(JSON.stringify(state),Date.now(),task.id);
     },

@@ -57,7 +57,7 @@ test('a paused workspace request resumes from disk on a reply to its stop messag
     calls++;return {actions:[{op:calls===1?'workspace_edit':'workspace_read',target:'src/report.js',value:'',extra:''}],answer:''};
   },workspace:async a=>a.op==='edit'?{edited:a.target,text:'saved'}:{text:'file contents'}});
   await first(original);
-  assert.match(h.replies.at(-1).content,/كمل/);
+  assert.match(h.replies.at(-1).content,/كرّر نفس الخطوات/);
   assert.deepEqual(db.codex.latestTask(actor,channel).progress.files,['src/report.js']);
   db.close();db=openStore(filename);
   const requests=[],ops=[],second='other-operator';
@@ -89,6 +89,97 @@ test('bare continuation uses only the requesting operator and channel and never 
   const resumed=h.message('كمل');await handle(resumed);
   assert.equal(requests.length,1);assert.equal(requests[0].prompt,'Finish coding');
   assert.equal(s.taskFor(resumed.id,channel).active,1);assert.deepEqual(s.notes(actor),[]);
+});
+
+test('one coding request crosses both old batch limits and finishes without a continuation message',async t=>{
+  const h=fixture(t),s=h.db.codex,plans=[];
+  let batches=0,steps=0;
+  const handle=createCodexHandler({store:s,isAdmin:async()=>true,
+    ask:async q=>{
+      if (batches) {
+        assert.ok(q.context.operations.every(op=>op.startsWith('workspace_')));
+        assert.ok(q.workspaceResults.length<=10);
+        assert.equal(q.workspaceResults.at(-1).line,batches*3);
+        plans.push(q.taskCheckpoint.plan);
+      }
+      if (batches===30) return {answer:'verified and finished',actions:[]};
+      const actions=[1,2,3].map(n=>({op:'workspace_read',target:'src/report.js',value:String(batches*3+n),extra:''}));
+      batches++;return {answer:'',actions,workSummary:'Finished batch '+batches};
+    },workspace:async a=>{steps++;return {text:'line '+a.value};}});
+  const original=h.message('+code inspect the report');
+  await handle(original);
+  assert.equal(steps,90);assert.equal(plans.at(-1),'Finished batch 30');
+  assert.equal(h.replies.at(-1).content,'verified and finished');
+  assert.equal(s.delivery(original.id).status,'done');assert.equal(s.latestTask(actor,channel),null);
+});
+
+test('recovery picks up only the latest unfinished running turn and never replays privileged actions',async t=>{
+  const h=fixture(t),s=h.db.codex,requests=[],loads=[];
+  const original=h.message('+code Build a report'), resumed=h.message('كمل');
+  s.begin(original.id,actor);s.finish(original.id,'paused');
+  const task=s.startTask(original.id,actor,channel,'Build a report');
+  s.savePlan(task,'Run remaining checks');
+  s.begin(resumed.id,actor);s.linkTask(resumed.id,task.id);s.finish(resumed.id,'working');
+  s.startTask('previous','another actor',channel,'Unrelated draft');
+  const handle=createCodexHandler({store:s,isAdmin:async id=>id===actor,
+    workspace:async()=>({text:'preserved draft',exit:0,ran:true}),
+    ask:async q=>{requests.push(q);return {answer:'done',actions:[]};}});
+  const load=async (room,id)=>{loads.push(id);assert.equal(room,channel);return resumed;};
+  await Promise.all([handle.recover(load),handle.recover(load)]);
+  await handle.recover(load);
+  assert.deepEqual(loads,[resumed.id]);assert.equal(requests.length,1);
+  assert.equal(requests[0].prompt,'Build a report');assert.equal(requests[0].taskCheckpoint.plan,'Run remaining checks');
+  assert.ok(requests[0].context.operations.every(op=>op.startsWith('workspace_')));
+  assert.equal(s.delivery(resumed.id).status,'done');assert.equal(s.latestTask('another actor',channel).id,'previous');
+});
+
+test('a running task can be stopped while Codex is thinking, before it makes another change',async t=>{
+  const h=fixture(t),s=h.db.codex;
+  let next,thinking,edits=0,asks=0;
+  const entered=new Promise(resolve=>{thinking=resolve;});
+  const delay=new Promise(resolve=>{next=resolve;});
+  const edit={answer:'',actions:[{op:'workspace_edit',target:'demo.js',value:'',extra:'hello'}]};
+  const handle=createCodexHandler({store:s,isAdmin:async id=>id===actor,workspace:async()=>{edits++;return {text:'saved',edited:'demo.js'};},
+    ask:async()=>{if (++asks>1) {thinking();await delay;}return edit;}});
+  const original=h.message('+code write a demo');
+  const run=handle(original);
+  await entered;
+  await handle(h.message('وقف المهمة',{author:{id:'someone'}}));
+  assert.ok(s.latestTask(actor,channel)?.active);
+  await handle(h.message('وقف المهمة'));next();await run;
+  assert.equal(edits,1);assert.equal(s.delivery(original.id).status,'stopped');assert.deepEqual(s.runningTasks(),[]);
+});
+
+test('a required decision preserves the checkpoint and a direct reply supplies it',async t=>{
+  const h=fixture(t),s=h.db.codex,requests=[];
+  const handle=createCodexHandler({store:s,isAdmin:async id=>id===actor,workspace:async()=>({text:'ok',exit:0}),ask:async q=>{
+    requests.push(q);
+    if (requests.length===1) return {actions:[{op:'workspace_read',target:'README.md',value:'',extra:''}]};
+    if (requests.length===2) return {answer:'ما اسم الأمر؟',actions:[],needsInput:true,workSummary:'Read the project guide'};
+    return {answer:'done',actions:[]};
+  }});
+  const msg=h.message('+code update the help');
+  await handle(msg);
+  assert.equal(s.delivery(msg.id).status,'needs-input');assert.deepEqual(s.runningTasks(),[]);
+  const parent={id:'question',author:{id:bot},guildId:catalog.guildId,channelId:channel,reference:{messageId:msg.id},content:'ما اسم الأمر؟'};
+  await handle(h.message('دليل',{reference:{channelId:channel,messageId:parent.id},fetchReference:async()=>parent}));
+  assert.match(requests.at(-1).prompt,/update the help[\s\S]*دليل/);
+  assert.equal(requests.at(-1).taskCheckpoint.plan,'Read the project guide');assert.equal(s.latestTask(actor,channel),null);
+});
+
+test('only a pure model query retries a temporary worker failure',async t=>{
+  const net=require('node:net'),path=require('node:path'),os=require('node:os'),{randomUUID}=require('node:crypto');
+  const {requestCodex}=require('../src/codex-worker-client');
+  const name='blueland-'+randomUUID();
+  const endpoint=process.platform==='win32'?'\\\\.\\pipe\\'+name:path.join(os.tmpdir(),name);
+  const replies=[{ok:false,reason:'temporary'},{ok:true,value:'recovered'},{ok:false,reason:'temporary'},{ok:false,reason:'quota'}];
+  const server=net.createServer(socket=>socket.once('data',()=>socket.end(JSON.stringify(replies.shift())+'\n')));
+  await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(endpoint,resolve);});
+  t.after(()=>new Promise(resolve=>server.close(resolve)));
+  assert.equal(await requestCodex({operation:'respond'},endpoint),'recovered');
+  await assert.rejects(requestCodex({op:'edit'},endpoint),{status:502});
+  await assert.rejects(requestCodex({operation:'respond'},endpoint),{status:429});
+  assert.equal(replies.length,0);
 });
 
 test('a verified stop reply from before checkpoints existed can recover its original request',async t=>{
