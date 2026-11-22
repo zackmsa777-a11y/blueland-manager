@@ -79,6 +79,39 @@ test('history reads up to ten earlier messages and ignores proposed actions',asy
   assert.equal(replies.at(-1).content,'جواب من السجل');
 });
 
+test('deploy requires an authorized command or a confirmed natural-language request',async t=>{
+  const h=fixture(t);
+  let starts=0;
+  const action={op:'vps_deploy',target:'',value:'',extra:''};
+  const handle=createCodexHandler({store:h.db.codex,isAdmin:async id=>id===actor,
+    ask:async()=>({answer:'',actions:[action]}),vps:{deploy:async()=>{starts++;},release:async()=>'live release'}});
+  await handle(h.message('+vps deploy',{author:{id:'other'}}));assert.equal(starts,0);
+  await handle(h.message('+vps deploy'));assert.equal(starts,1);
+  await handle(h.message('+vps release'));assert.equal(h.replies.at(-1).content,'live release');
+  const natural=h.message('<@'+bot+'> deploy main');
+  await handle(natural);assert.equal(starts,1);
+  const parent={id:'reply'+natural.id,author:{id:bot},guildId:catalog.guildId,channelId:channel};
+  const confirm=h.message('تأكيد',{reference:{channelId:channel,messageId:parent.id},fetchReference:async()=>parent});
+  await handle(confirm);await handle(confirm);assert.equal(starts,2);
+});
+
+test('channel context is excluded when planning actions, and its cursor advances',async t=>{
+  const h=fixture(t),requests=[];
+  const entry={id:'500',author:{id:'333',username:'member'},content:'Some earlier message.',attachments:{size:0}};
+  const page=new Map([[entry.id,entry]]);
+  const chan={sendTyping:async()=>{},permissionsFor:()=>({has:()=>true}),messages:{fetch:async()=>page}};
+  const handle=createCodexHandler({store:h.db.codex,isAdmin:async id=>id===actor,ask:async req=>{
+    requests.push(req);
+    return req.context.recentMessages?{answer:'',actions:[{op:'note_save',target:'',value:'unrequested note',extra:''}]}:{answer:'ok',actions:[]};
+  }});
+  await handle(h.message('<@'+bot+'> hello',{channel:chan}));
+  assert.equal(requests[0].context.recentMessages[0].content,entry.content);
+  assert.equal(requests[1].context.recentMessages,undefined);
+  assert.deepEqual(h.db.codex.notes(actor),[]);
+  await handle(h.message('<@'+bot+'> hello again',{channel:chan}));
+  assert.equal(requests.length,3);assert.equal(requests[2].context.recentMessages,undefined);
+});
+
 function fixture(t) {
   const db=openStore(':memory:');t.after(()=>db.close());
   const replies=[],calls=[];

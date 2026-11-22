@@ -1,0 +1,29 @@
+[Unit]
+Description=Test and activate BlueLand from GitHub main
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=blueland-release
+Group=blueland-release
+StateDirectory=blueland-releases
+StateDirectoryMode=0755
+WorkingDirectory=/var/lib/blueland-releases
+ExecStart=/usr/bin/python3 /usr/local/libexec/blueland-release.py
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=GIT_TERMINAL_PROMPT=0
+TimeoutStartSec=6min
+UMask=0022
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectProc=invisible
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+CapabilityBoundingSet=
+InaccessiblePaths=-/etc/blueland -/var/lib/blueland -/var/lib/blueland-workspace -/run/blueland-codex.sock -/run/blueland-workspace.sock
+ReadWritePaths=/var/lib/blueland-releases

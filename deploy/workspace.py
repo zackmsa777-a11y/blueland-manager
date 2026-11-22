@@ -26,6 +26,31 @@ def filename(name):
 
 def perform(item):
     op = item["op"]
+    if op == "patch":
+        git = ["/usr/bin/git", "--literal-pathspecs", "-c", "core.fsmonitor=false"]
+        changes = subprocess.check_output(git + ["ls-files", "-z", "--modified", "--deleted", "--others", "--exclude-standard"])
+        names = sorted(set(os.fsdecode(changes).split("\0")) - {""})
+        if not names:
+            return {"text": ""}
+        if len(names) > 100:
+            raise ValueError("Too many files in the draft")
+        total = 0
+        for name in names:
+            path = filename(name)
+            if path.exists():
+                if not path.is_file():
+                    raise ValueError("Unsupported file in the draft")
+                total += path.stat().st_size
+        if total > 2_000_000:
+            raise ValueError("Draft exceeds the export size limit")
+        with tempfile.TemporaryDirectory() as tmp:
+            env = dict(os.environ, GIT_INDEX_FILE=os.path.join(tmp, "index"))
+            subprocess.run(git + ["read-tree", "HEAD"], env=env, check=True)
+            subprocess.run(git + ["add", "-A", "--", *names], env=env, check=True)
+            patch = subprocess.check_output(git + ["diff", "--cached", "--no-ext-diff", "--no-textconv", "--binary", "HEAD"], env=env)
+        if len(json.dumps(patch.decode("utf-8"),ensure_ascii=False).encode()) > 55000:
+            raise ValueError("Draft exceeds the Discord patch export size limit")
+        return {"text": patch.decode("utf-8")}
     if op=="files":
         paths = []
         for base, dirs, names in os.walk(ROOT):
@@ -77,6 +102,6 @@ try:
     if len(raw)>50000: raise ValueError("Request too large")
     with open(ROOT/".blueland-lock","a") as lock:
         fcntl.flock(lock,fcntl.LOCK_EX)
-        print(json.dumps({"ok":True,"value":perform(json.loads(raw))}),flush=True)
+        print(json.dumps({"ok":True,"value":perform(json.loads(raw))},ensure_ascii=False),flush=True)
 except Exception as error:
     print(json.dumps({"ok":True,"value":{"text":"Workspace error: "+str(error)[:240],"error":True}}),flush=True)
