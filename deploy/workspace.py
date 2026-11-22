@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """File operations and known development commands in the offline BlueLand project copy."""
 import fcntl
+import hashlib
 import json
 import os
 import pathlib
@@ -26,6 +27,40 @@ def filename(name):
 
 def perform(item):
     op = item["op"]
+    if op in {"feature_snapshot","feature_merged"}:
+        feature = "config/discord-features.json"
+        git = ["/usr/bin/git","-c","core.hooksPath=/dev/null","-c","core.fsmonitor=false"]
+        state = ROOT/".git"/"blueland-feature-base"
+        head = subprocess.check_output(git+["rev-parse","HEAD"],text=True).strip()
+        if op=="feature_snapshot":
+            changed = subprocess.check_output(git+["diff","--name-only","-z","HEAD"])
+            untracked = subprocess.check_output(git+["ls-files","--others","--exclude-standard","-z"])
+            names = (set(os.fsdecode(changed+untracked).split("\0")) - {"",feature})
+            if names:
+                return {"blocked":sorted(names)[:12]}
+            path = filename(feature)
+            if path.stat().st_size>22000:
+                raise ValueError("Feature file too large")
+            original = hashlib.sha256(subprocess.check_output(git+["show","HEAD:"+feature])).hexdigest()
+            if state.exists():
+                memo=json.loads(state.read_text())
+                if memo["head"]==head: original=memo["original"]
+            return {"original":original,"content":path.read_bytes().decode("utf-8")}
+        revision=item["revision"]
+        if not re.fullmatch(r"[a-f0-9]{40}",revision): raise ValueError("Invalid revision")
+        mirror="/var/lib/blueland-publish/refs.git"
+        env=dict(os.environ,GIT_CONFIG_COUNT="1",GIT_CONFIG_KEY_0="safe.directory",GIT_CONFIG_VALUE_0=mirror)
+        subprocess.run(git+["fetch","--quiet","--no-tags",mirror,"refs/heads/main"],check=True,env=env)
+        subprocess.run(git+["merge-base","--is-ancestor",revision,"FETCH_HEAD"],check=True)
+        subprocess.run(git+["merge-base","--is-ancestor",head,revision],check=True)
+        paths=subprocess.check_output(git+["diff","--name-only",head,revision],text=True).splitlines()
+        if set(paths)<={feature}:
+            subprocess.run(git+["reset","--quiet","--mixed",revision],check=True)
+            state.unlink(missing_ok=True)
+        else:
+            blob=subprocess.check_output(git+["show",revision+":"+feature])
+            state.write_text(json.dumps({"head":head,"original":hashlib.sha256(blob).hexdigest()}))
+        return {"synced":True}
     if op == "patch":
         git = ["/usr/bin/git", "--literal-pathspecs", "-c", "core.fsmonitor=false"]
         changes = subprocess.check_output(git + ["ls-files", "-z", "--modified", "--deleted", "--others", "--exclude-standard"])

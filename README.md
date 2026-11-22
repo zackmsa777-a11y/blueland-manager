@@ -12,7 +12,7 @@
 - `+code TASK` يقرأ ويعدّل نسخة تطوير مستقلة، ويشغّل اختبارات أو فحوصات المشروع. تعرض رسالة التقدم عدد الملفات التي تغيّرت والأوامر التي نُفّذت. يتطلب نشر تعديلات المشروع خطوة نشر منفصلة. أوامر ديسكورد التي ينشئها Codex باستخدام `save_command` تصبح متاحة فورًا.
 - `+vps status` يفحص الخدمات. يعيد `+vps restart bot` أو `+vps restart dashboard` تشغيل الخدمة المحددة.
 - `+سجل` أو `+history` يعرض آخر عشر رسائل في الروم. أضف سؤالك بعد الأمر للحصول على جواب يستند إليها. عند منشن البوت، يستعين أيضًا بآخر الرسائل الجديدة في الروم لفهم طلبك.
-- `+vps patch` يرسل لك ملف تعديلات نسخة التطوير في الخاص. بعد مراجعة التعديلات ودمجها في `main`، شغّل `+vps deploy` من ديسكورد. تختبر الخدمة الإصدار على الـVPS ثم تنقله للتشغيل وتتحقق من اتصال البوت وتسجيل أوامره. تعيد الخدمة الإصدار السابق إذا تعذّر تشغيل الجديد. يعرض `+vps release` نتيجة النشر ومعرّف الإصدار.
+- اكتب `انشر` أو `+vps deploy` لدمج مسودة `config/discord-features.json` في GitHub ونشرها. يحتوي الملف على أوامر ديسكورد وقوالب ردود النشاط. تتحقق خدمة النشر من الرسالة الأصلية وهوية كاتبها عبر Discord. يشغّل الـVPS الاختبارات ويتحقق من الاتصال بعد إعادة التشغيل. يعرض `+vps release` النتيجة ومعرّف الإصدار. لتعديلات كود التطبيق الأخرى، يرسل `+vps patch` ملف التعديلات للمراجعة، وينشر `+vps main` الإصدار المدموج.
 - لإنشاء أمر قابل لإعادة الاستخدام، اكتب مثلًا `@BlueLand Manager أضف أمر +ملخص يعرض اسم السيرفر وعدد أعضائه`. تُحفظ تعليمات الأمر في SQLite وتتحقق صلاحية المسؤول عند كل استخدام.
 
 تستخدم خدمة Codex على Ubuntu تسجيل دخول `codex` لحساب `ubuntu`. يعمل البوت بحساب `blueland` من المسار `/opt/blueland-manager`. ثبّت ملفات `.socket` و`.service` من `deploy/` في `/etc/systemd/system/`، وملف `.rules` في `/etc/polkit-1/rules.d/` بملكية root. يسمح الملف للبوت بإعادة تشغيل خدمته ونفق اللوحة. يحتفظ حساب SSH بإدارة النظام.
@@ -20,6 +20,8 @@
 أنشئ مستخدم نظام مستقلًا باسم `blueland-workspace` ونسخة Git محلية مستقلة في `/var/lib/blueland-workspace/project` بملكيته. ثبّت تبعيات المشروع فيها من ملف القفل. شغّل `systemctl daemon-reload` ثم `systemctl enable --now blueland-codex.socket blueland-workspace.socket`. تحفظ نسخة التطوير تعديلات الملفات بعد انتهاء الطلب، ويستطيع مشغّل VPS مراجعتها عبر Git.
 
 ثبّت سكربتي `deploy/workspace.py` و`deploy/codex-worker.py` في `/usr/local/libexec/` تحت اسمي `blueland-workspace.py` و`blueland-codex-worker.py` بملكية root.
+
+للدمج من ديسكورد، تعمل خدمة `blueland-publish@` بمستخدم النظام `blueland-publish`. ثبّت `deploy/publish-draft.py` بملكية root في `/usr/local/libexec/blueland-publish.py`، وأنشئ مفتاح نشر GitHub مخصّصًا لهذا المستودع مع صلاحية الكتابة. تُحفظ نسخته الخاصة في `/etc/blueland-publish/github_key` بملكية root ووضع `0600`، وبصمة مضيف GitHub في `known_hosts` بجواره. يحتوي ملف `operators` في المجلد نفسه على `OPERATOR_ID` و`OWNER_ID`. بعد تثبيت وحدات النظام فعّل `blueland-publish.socket` و`blueland-publish-release.path`. يقرأ الناشر رسالة ديسكورد الأصلية ويتحقق من السيرفر والحساب والصلاحية قبل تحديث ملف المزايا في المستودع.
 
 لتفعيل النشر من ديسكورد، أنشئ مستخدم نظام `blueland-release` بمجلد `/var/lib/blueland-releases` بملكيته ووضع `0755`. وجّه الرابط الرمزي `current` داخله إلى النسخة الشغّالة في `/opt/blueland-manager` عند الإعداد الأول. ثبّت `deploy/release.py` بملكية root في `/usr/local/libexec/blueland-release.py`، و`deploy/blueland-release-app.conf` في `/etc/systemd/system/blueland.service.d/`، ثم أعد تحميل وحدات systemd. تختص خدمة النشر بتطبيق Discord واللوحة. تبقى وحدات النظام وأدوات SSH تحت إدارة مشغّل الخادم.
 

@@ -3,6 +3,8 @@
 const {Routes} = require('discord.js');
 const {catalog,roles,RuleError} = require('./ladder');
 const {kinds,requestStates} = require('./community');
+const {activity}=require('../config/discord-features.json');
+const formatActivity=(template,values)=>template.replace(/\{(\w+)\}/g,(match,key)=>Object.hasOwn(values,key)?String(values[key]):match);
 
 const option=(type,name,description,required=true,extra={})=>({type,name,description,required,...extra});
 const sub=(name,description,options=[])=>({type:1,name,description,options});
@@ -90,8 +92,12 @@ function commandRunner({store,community,promotions,readyGuild,pair}) {
     }
     if (action==='rank' || action==='top') {
       if (!db.settings().levels) throw new RuleError('نظام المستويات متوقف. يمكن لإدارة السيرفر تفعيله من لوحة الطاقم.');
-      if (action==='rank') { const target=input.target || actor; const xp=db.xp(target); return '<@'+target+'> · المستوى '+Math.floor(xp/100)+' · '+xp+' نقطة.'; }
-      return db.top().map((r,i)=>(i+1)+'. <@'+r.member+'> · '+r.xp+' نقطة').join('\n') || 'تظهر قائمة النشاط بعد أول مشاركة مؤهلة.';
+      if (action==='rank') {
+        const member=input.target||actor, points=db.xp(member);
+        return formatActivity(activity.rank,{member,points,level:Math.floor(points/100),remaining:100-points%100});
+      }
+      const rows=db.top().map((row,index)=>formatActivity(activity.row,{member:row.member,points:row.xp,position:index+1}));
+      return formatActivity(activity.top,{rows:rows.join('\n')||activity.empty}).slice(0,1950);
     }
     if (action==='request') {
       if (input.sub==='cancel') {

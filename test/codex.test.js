@@ -86,13 +86,28 @@ test('deploy requires an authorized command or a confirmed natural-language requ
   const handle=createCodexHandler({store:h.db.codex,isAdmin:async id=>id===actor,
     ask:async()=>({answer:'',actions:[action]}),vps:{deploy:async()=>{starts++;},release:async()=>'live release'}});
   await handle(h.message('+vps deploy',{author:{id:'other'}}));assert.equal(starts,0);
-  await handle(h.message('+vps deploy'));assert.equal(starts,1);
+  await handle(h.message('+vps main'));assert.equal(starts,1);
   await handle(h.message('+vps release'));assert.equal(h.replies.at(-1).content,'live release');
   const natural=h.message('<@'+bot+'> deploy main');
   await handle(natural);assert.equal(starts,1);
   const parent={id:'reply'+natural.id,author:{id:bot},guildId:catalog.guildId,channelId:channel};
   const confirm=h.message('تأكيد',{reference:{channelId:channel,messageId:parent.id},fetchReference:async()=>parent});
   await handle(confirm);await handle(confirm);assert.equal(starts,2);
+});
+
+test('only an explicit human publish message submits the feature draft and starts a release',async t=>{
+  const h=fixture(t),calls=[];
+  const candidate=JSON.stringify(require('../config/discord-features.json'));
+  const handle=createCodexHandler({store:h.db.codex,isAdmin:async id=>id===actor,
+    workspace:async a=>{calls.push(a.op);return a.op==='feature_snapshot'?{content:candidate,original:'old'}:{synced:true};},
+    publish:async p=>{assert.equal(p.actor,actor);assert.equal(p.channel,channel);assert.equal(p.content,candidate);
+      calls.push('publish');return {revision:'1'.repeat(40)};},
+    vps:{deploy:async()=>calls.push('deploy')}});
+  await handle(h.message('انشر',{author:{id:'another-admin'}}));
+  assert.deepEqual(calls,[]);
+  const user=h.message('<@'+bot+'> انشر');
+  await handle(user);await handle(user);
+  assert.deepEqual(calls,['feature_snapshot','publish','feature_merged','deploy']);
 });
 
 test('channel context is excluded when planning actions, and its cursor advances',async t=>{

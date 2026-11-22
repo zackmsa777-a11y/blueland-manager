@@ -8,7 +8,7 @@ const native=new Set(['server','roles','ping','help','rank','top','promote','dem
 const operations=[...native,'say','create_text','create_voice','create_category','create_forum','create_stage','create_announcement','move_channel','rename_channel','delete_channel','topic','slowmode','create_role','rename_role','role_color','role_permissions','delete_role','give_role','take_role','nickname','voice_move','voice_disconnect','voice_mute','voice_deafen','react','create_thread','archive_thread','pin','unpin','delete_message','save_command','forget_command'];
 operations.push('vps_status','vps_restart','vps_deploy','vps_release','note_save','note_forget','workspace_files','workspace_read','workspace_edit','workspace_command');
 const destructive=new Set(['delete_channel','delete_role','delete_message','role_permissions','ban','kick','forget_command','vps_deploy']);
-const reserved=new Set(['vps','memory','code','history','سجل','model','موديل','لوحة','ترقية','تخفيض',...Object.keys(chatAliases),...Object.values(chatAliases),...commands.map(c=>c.name)]);
+const reserved=new Set(['vps','memory','code','history','سجل','model','موديل','لوحة','ترقية','تخفيض','نشر','انشر',...Object.keys(chatAliases),...Object.values(chatAliases),...commands.map(c=>c.name)]);
 const managedRanks=new Set(catalog.categories.flatMap(g=>[...g.ranks,g.variant,...g.helpers]));
 const id=value=>{if (!/^\d{17,20}$/.test(value)) throw new RuleError('معرّف الهدف غير صالح.'); return value;};
 function featureName(value) {

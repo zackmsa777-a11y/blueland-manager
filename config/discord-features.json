@@ -1,0 +1,9 @@
+{
+  "activity": {
+    "rank": "<@{member}> · المستوى {level} · {points} نقطة.",
+    "top": "{rows}",
+    "row": "{position}. <@{member}> · {points} نقطة",
+    "empty": "تظهر قائمة النشاط بعد أول مشاركة مؤهلة."
+  },
+  "commands": {}
+}

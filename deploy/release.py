@@ -101,4 +101,19 @@ def publish():
 
 
 if __name__ == "__main__":
-    publish()
+    wanted = pathlib.Path("/var/lib/blueland-publish/wanted")
+    def requested():
+        try:
+            return wanted.read_text()
+        except FileNotFoundError:
+            return ""
+    while True:
+        started = requested()
+        try:
+            publish()
+        except Exception:
+            if started != requested():
+                continue
+            raise
+        if started == requested():
+            break

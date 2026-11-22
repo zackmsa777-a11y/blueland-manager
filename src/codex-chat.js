@@ -3,7 +3,7 @@
 const {PermissionFlagsBits:P}=require('discord.js');
 const {catalog,RuleError}=require('./ladder');
 const {requestCodex}=require('./codex-worker-client');
-const {applyAction,inspectActions,operations,destructive}=require('./codex-actions');
+const {applyAction,inspectActions,operations,destructive,featureName}=require('./codex-actions');
 const {commands,chatAliases}=require('./commands');
 const {runFeature}=require('./codex-feature');
 const vpsService=require('./codex-vps');
@@ -45,7 +45,8 @@ async function readNewContext(message,store) {
   return entries;
 }
 
-function createCodexHandler({store,isAdmin,ask=requestCodex,workspace=a=>requestCodex(a,'/run/blueland-workspace.sock'),vps=vpsService,run}) {
+function createCodexHandler({store,isAdmin,ask=requestCodex,workspace=a=>requestCodex(a,'/run/blueland-workspace.sock'),
+  publish=a=>requestCodex(a,'/run/blueland-publish.sock'),vps=vpsService,run}) {
   const busy=new Set();
   return async function handle(message) {
     if (message.guildId!==catalog.guildId || message.author.bot || message.webhookId || message.system) return false;
@@ -61,7 +62,8 @@ function createCodexHandler({store,isAdmin,ask=requestCodex,workspace=a=>request
     const modelCommand=name==='model'||name==='موديل';
     const vpsCommand=name==='vps';
     const historyCommand=name==='history'||name==='سجل';
-    const direct=modelCommand||vpsCommand||historyCommand||name==='memory'||name==='code';
+    const publishDraft=['انشر','انشر التعديلات','+نشر','+vps deploy'].includes(text.replace(mention,'').trim());
+    const direct=publishDraft||modelCommand||vpsCommand||historyCommand||name==='memory'||name==='code';
     const recipe=name?store.feature(name):null;
     if (!direct&&!recipe&&!mentioned&&replyRef&&message.mentions?.repliedUser&&message.mentions.repliedUser.id!==me) return false;
     if (!mentioned&&!replyRef&&!direct&&!recipe) return false;
@@ -80,6 +82,25 @@ function createCodexHandler({store,isAdmin,ask=requestCodex,workspace=a=>request
       if (busy.has(actor)||busy.size>=4) throw new RuleError('هناك طلب Codex قيد التنفيذ. حاول بعد انتهائه.');
       busy.add(actor); acquired=true;
       const input=text.replace(mention,'').trim();
+      if (publishDraft) {
+        const draft=await workspace({op:'feature_snapshot'});
+        if (draft.blocked?.length) throw new RuleError('تحتاج الملفات التالية مراجعة كود قبل النشر. استخدم +vps patch لعرضها:\n'+draft.blocked.join('\n').slice(0,1400));
+        if (draft.error) throw new RuleError('تعذّرت قراءة مسودة المزايا.');
+        let manifest;
+        try {manifest=JSON.parse(draft.content);} catch {throw new RuleError('ملف المزايا يحتوي على JSON غير صالح.');}
+        for (const [cmd,spec] of Object.entries(manifest?.commands||{})) {
+          if (cmd!==featureName(cmd)) throw new RuleError('اسم أمر غير صالح.');
+          if (spec?.source) await runFeature(spec.source,{},true);
+        }
+        if (!await isAdmin(actor)) throw new RuleError('تغيّرت صلاحيتك قبل النشر.');
+        const merged=await publish({actor,channel,message:message.id,original:draft.original,content:draft.content});
+        if (merged.error) throw new RuleError(merged.error);
+        const synced=await workspace({op:'feature_merged',revision:merged.revision}).catch(()=>null);
+        await vps.deploy();
+        await reply('إصدار المسودة على GitHub: '+merged.revision.slice(0,8)+'\nبدأ فحص الإصدار للنشر. تابع +vps release.'+
+          (synced?.synced?'':'\nتحتاج نسخة التطوير إلى مزامنة.'));
+        store.finish(message.id,'done');return true;
+      }
       if (name==='memory') {
         const raw=(typed[2]||'list').trim();
         if (raw==='list') {
@@ -150,8 +171,8 @@ function createCodexHandler({store,isAdmin,ask=requestCodex,workspace=a=>request
       let finalText='';
       if (vpsCommand) {
         const parts=(typed[2]||'status').trim().split(/\s+/);
-        if (parts.length===1 && ['release','deploy','patch'].includes(parts[0])) {
-          if (parts[0]==='deploy') {
+        if (parts.length===1 && ['release','main','patch'].includes(parts[0])) {
+          if (parts[0]==='main') {
             await vps.deploy();
             await reply(deployReceipt);
           } else if (parts[0]==='patch') {
@@ -164,7 +185,7 @@ function createCodexHandler({store,isAdmin,ask=requestCodex,workspace=a=>request
         }
         if (parts[0]==='status'&&parts.length===1) actions=[{op:'vps_status',target:'',value:'',extra:''}];
         else if (parts[0]==='restart'&&parts.length===2) actions=[{op:'vps_restart',target:parts[1],value:'',extra:''}];
-        else throw new RuleError('+vps status | +vps patch | +vps deploy | +vps release | +vps restart bot | +vps restart dashboard');
+        else throw new RuleError('انشر | +vps main | +vps status | +vps patch | +vps release | +vps restart bot | +vps restart dashboard');
         progress=activity(reply,store.settings());
         await progress.show('Checking services…');
       } else if (previous && /^(?:confirm|تأكيد|تأكيد التنفيذ)$/iu.test(input)) {

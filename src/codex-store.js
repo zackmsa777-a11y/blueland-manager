@@ -1,5 +1,6 @@
 'use strict';
 const {RuleError}=require('./ladder');
+const shipped=new Map(Object.entries(require('../config/discord-features.json').commands));
 
 function openCodexStore(db) {
   db.exec(`
@@ -33,11 +34,17 @@ function openCodexStore(db) {
     forgetNote: (actor,id)=>db.prepare('DELETE FROM codex_notes WHERE actor=? AND id=?').run(actor,id).changes,
     settings: () => db.prepare('SELECT model,effort FROM codex_settings WHERE id=1').get(),
     configure: (model, effort) => db.prepare('UPDATE codex_settings SET model=?,effort=? WHERE id=1').run(model,effort),
-    feature: name => db.prepare('SELECT instruction FROM codex_commands WHERE name=?').get(name)?.instruction,
-    source: name => db.prepare('SELECT source FROM codex_commands WHERE name=?').get(name)?.source,
-    features: () => db.prepare('SELECT name FROM codex_commands ORDER BY name').all().map(row=>row.name),
-    save: (name, instruction, source='') => db.prepare('INSERT INTO codex_commands(name,instruction,source) VALUES(?,?,?) ON CONFLICT(name) DO UPDATE SET instruction=excluded.instruction,source=excluded.source').run(name,instruction,source),
-    remove: name => db.prepare('DELETE FROM codex_commands WHERE name=?').run(name).changes,
+    feature: name => shipped.get(name)?.instruction ?? db.prepare('SELECT instruction FROM codex_commands WHERE name=?').get(name)?.instruction,
+    source: name => shipped.has(name)?shipped.get(name).source:db.prepare('SELECT source FROM codex_commands WHERE name=?').get(name)?.source,
+    features: () => [...new Set([...shipped.keys(),...db.prepare('SELECT name FROM codex_commands ORDER BY name').all().map(row=>row.name)])].sort(),
+    save(name,instruction,source='') {
+      if (shipped.has(name)) throw new RuleError('حدّث الأمر في config/discord-features.json ثم انشر المسودة.');
+      return db.prepare('INSERT INTO codex_commands(name,instruction,source) VALUES(?,?,?) ON CONFLICT(name) DO UPDATE SET instruction=excluded.instruction,source=excluded.source').run(name,instruction,source);
+    },
+    remove(name) {
+      if (shipped.has(name)) throw new RuleError('احذف الأمر من config/discord-features.json ثم انشر المسودة.');
+      return db.prepare('DELETE FROM codex_commands WHERE name=?').run(name).changes;
+    },
     begin(id,actor) {
       db.prepare('DELETE FROM codex_confirmations WHERE expires<=?').run(Date.now());
       return db.prepare("INSERT OR IGNORE INTO codex_deliveries VALUES(?,?,?,'started')").run(id,actor,Date.now()).changes===1;
