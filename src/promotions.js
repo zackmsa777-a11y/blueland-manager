@@ -23,7 +23,7 @@ function checkOperator(ctx, allowed) {
 
 function checkPlan(ctx, plan, allowed) {
   const operator = checkOperator(ctx, allowed);
-  if (plan.direction === 'demote' && ctx.actor.id !== ctx.ownerId && !operator.admin) {
+  if (plan.direction === 'demote' && ctx.actor.id !== ctx.ownerId && !(ctx.actor.id===ctx.operatorId && operator.admin)) {
     throw new RuleError('التخفيض يحتاج صلاحية Administrator.',403);
   }
   if (ctx.actor.id === ctx.target.id || ctx.target.id === ctx.ownerId || ctx.target.bot) {

@@ -36,7 +36,7 @@ function connectDiscord(store, env) {
       ]);
       const found = new Map(members.map(m => [m.user.id, person(m)]));
       return { roles: new Map(all.map(r => [r.id, r])), actor: found.get(actorId), target: found.get(targetId),
-        bot: found.get(client.user.id), ownerId: guild.ownerId };
+        bot: found.get(client.user.id), ownerId: guild.ownerId, operatorId: env.CODEX_OPERATOR_ID };
     } catch (err) {
       if (err.code === 10007 || err.code === 10013) throw new RuleError('العضو غير موجود في سيرفر BlueLand.', 404);
       if (err.code === 50001 || err.code === 50013) throw new RuleError('تعذّرت قراءة العضو أو الرولات بصلاحيات البوت الحالية.', 403);
@@ -71,7 +71,7 @@ function connectDiscord(store, env) {
   const run=commandRunner({store,community,promotions:service,readyGuild,pair});
   async function isAdmin(actor) {
     const ctx=await context(actor);
-    return !ctx.actor.bot && (actor===ctx.ownerId || memberAccess(ctx,ctx.actor).admin);
+    return !ctx.actor.bot && (actor===ctx.ownerId || (actor===ctx.operatorId && memberAccess(ctx,ctx.actor).admin));
   }
   const codex=createCodexHandler({store:store.codex,isAdmin,run});
   const onMessage=createMessageHandler({authorize:community.dashboard,service,store,publicOrigin:env.PUBLIC_ORIGIN,run,parse:parseChat,codex});
