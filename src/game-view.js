@@ -76,7 +76,12 @@ function cardMessage(card, description) {
 }
 
 const {rouletteTargets} = require('./game-rules');
-const {renderRouletteSpin, renderRouletteLobby, renderRouletteResult} = require('./game-card');
+const {renderRouletteSpin, renderRouletteLobby, renderRouletteResult, renderRouletteWinner} = require('./game-card');
+
+const rouletteEconomyButtons = () => row([
+  {type: 2, style: 2, label: 'حقيبتي', custom_id: 'blgshop:bag', emoji: {name: '🎒'}},
+  {type: 2, style: 2, label: 'متجر النقاط', custom_id: 'blgshop:shop', emoji: {name: '🛒'}}
+]);
 
 function rouletteLobby(game) {
   const count = `(${game.players.size} / ${games.roulette.max})`;
@@ -86,7 +91,7 @@ function rouletteLobby(game) {
     files: [{attachment: renderRouletteLobby(game.rouletteBanner), name: 'roulette.png', description: `روليت BlueLand · التسجيل مفتوح ${count}`}],
     embeds: [{image: {url: 'attachment://roulette.png'}}],
     components: [row([display('join', 'دخول', '➕'), display('leave', 'خروج', '🚪'),
-      display('start', 'ابدأ', '▶️', 1), display('cancel', 'إلغاء', '✖️')])]
+      display('start', 'ابدأ', '▶️', 1), display('cancel', 'إلغاء', '✖️')]), rouletteEconomyButtons()]
   };
 }
 
@@ -98,13 +103,16 @@ function roulettePanel(game) {
   const allowedMentions = {parse: []};
   const turn = `الجولة ${game.round} · ${items.length} في اللعب`;
   if (game.phase === 'done') {
-    const banner = cardMessage({game: 'roulette', title, items, selected: 0,
-      subtitle: 'انتهت اللعبة', footer: `الفائز · ${getName(game, game.winner)}`}, `الفائز · ${getName(game, game.winner)}`);
+    const name = getName(game, game.winner);
     const avatar = game.avatars?.get(game.winner);
-    Object.assign(banner.embeds[0], {title: '👑 الفائز بالروليت',
-      description: `<@${game.winner}>`, url: `https://discord.com/users/${game.winner}`,
-      color: 0xe5b460, ...(avatar ? {thumbnail: {url: avatar}} : {})});
-    return {...banner, content: null, components: [], allowedMentions};
+    const reward = game.winnerReward || 0;
+    const card = renderRouletteWinner({name, avatar: game.winnerAvatar, reward, style: game.winnerStyle});
+    return {content: null, allowedMentions, components: [rouletteEconomyButtons()],
+      files: [{attachment: card, name: 'roulette.png', description: `الفائز · ${name}${reward ? ` · +${reward} نقاط` : ''}`}],
+      embeds: [{title: '👑 الفائز بالروليت', description: `<@${game.winner}>`,
+        url: `https://discord.com/users/${game.winner}`, color: 0xe5b460,
+        image: {url: 'attachment://roulette.png'}, ...(avatar ? {thumbnail: {url: avatar}} : {}),
+        ...(reward ? {footer: {text: `+${reward} نقاط للروليت`}} : {})}]};
   }
   if (game.rouletteStage === 'spin') {
     const footer = game.lastOut ? `خرج ${getName(game, game.lastOut)}` : 'العجلة تدور لاختيار لاعب';

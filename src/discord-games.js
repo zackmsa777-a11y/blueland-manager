@@ -7,6 +7,7 @@ const {games, moves, createGame, start, eligiblePlayers, choose, ready, advance,
   spinRoulette, stopRoulette, resolveRoulette} = require('./game-rules');
 const {gamePanel, privateRole, voteMenu, rouletteMenu} = require('./game-view');
 const {rouletteBanner, rouletteAvatar} = require('./roulette-media');
+const {shopPanel} = require('./roulette-shop');
 
 const privateReply = {flags: MessageFlags.Ephemeral, allowedMentions: {parse: []}};
 const durations = {lobby: 180_000, chairs: 9_000, mafia: 35_000, rps: 25_000};
@@ -16,7 +17,7 @@ const playerAvatar = i => {
   return i.member?.displayAvatarURL?.(options) || i.user.displayAvatarURL?.(options);
 };
 
-function createDiscordGames() {
+function createDiscordGames(economy) {
   const rooms = new Map();
   const active = game => rooms.get(game.room) === game;
 
@@ -91,11 +92,23 @@ function createDiscordGames() {
   }
 
   function finishSpin(game, user, action, target) {
+    const picked = game.roulettePlayer;
     if (!resolveRoulette(game, user, action, target)) return false;
     clearTimeout(game.timer);
     if (game.phase === 'done') {
       release(game);
-      publish(game);
+      try {
+        game.winnerStyle = economy?.profile(game.winner).equipped;
+        game.winnerReward = economy?.award(game.id, game.winner) || 0;
+      } catch (err) {
+        console.error('Unable to save roulette reward:', err.message);
+      }
+      const showWinner = avatar => {
+        game.winnerAvatar = avatar;
+        publish(game);
+      };
+      if (game.winner === picked && game.rouletteAvatar) showWinner(game.rouletteAvatar);
+      else void rouletteAvatar(game.avatars.get(game.winner)).then(showWinner);
     } else startSpin(game);
     return true;
   }
@@ -233,12 +246,29 @@ function createDiscordGames() {
     return ack;
   }
 
+  async function economyAction(i, action) {
+    if (!economy) throw new RuleError('متجر الروليت غير متاح حاليًا.');
+    const user = i.user.id;
+    if (action === 'buy' || action === 'equip') {
+      const key = i.values?.[0];
+      const profile = action === 'buy' ? economy.buy(user,key) : economy.equip(user,key);
+      const text = action === 'buy' ? 'تم الشراء وتفعيل الإطار.' : 'تم تفعيل الإطار.';
+      return i.update({...shopPanel(action === 'buy' ? 'shop' : 'bag', profile, text), allowedMentions: {parse: []}});
+    }
+    return i.reply({...privateReply, ...shopPanel(action, economy.profile(user))});
+  }
+
   async function handle(i) {
     const opening = i.isChatInputCommand() && i.commandName === 'game';
+    const key = opening ? `blgshop:${i.options.getSubcommand(false)}` : i.customId;
+    const opensShop = (opening || i.isButton()) && ['blgshop:bag', 'blgshop:shop'].includes(key);
+    const changesShop = i.isStringSelectMenu() && ['blgshop:buy', 'blgshop:equip'].includes(key);
+    const shop = opensShop || changesShop;
     const control = (i.isButton() || i.isStringSelectMenu()) && i.customId.startsWith('blg:');
-    if (!opening && !control) return false;
+    if (!opening && !control && !shop) return false;
     try {
-      await (opening ? open(i) : component(i));
+      if (shop) await economyAction(i, key.slice('blgshop:'.length));
+      else await (opening ? open(i) : component(i));
     } catch (err) {
       const content = err instanceof RuleError ? err.message : 'تعذّر إتمام خطوة اللعبة. حاول مرة ثانية.';
       if (opening && (i.deferred || i.replied)) await i.editReply({content}).catch(() => {});

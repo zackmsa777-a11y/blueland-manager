@@ -42,7 +42,9 @@ const commands=[
     sub('roulette','ابدأ جولة روليت لاختيار فائز'),
     sub('chairs','ابدأ جولة كراسي موسيقية'),
     sub('mafia','ابدأ جولة مافيا بأدوار سرية'),
-    sub('rps','ابدأ تحدي حجر ورقة مقص')
+    sub('rps','ابدأ تحدي حجر ورقة مقص'),
+    sub('bag','شوف رصيدك وإطارات الروليت في حقيبتك'),
+    sub('shop','افتح متجر إطارات الروليت بالنقاط')
   ])
 ];
 const chatAliases={
@@ -57,7 +59,7 @@ const helpText=[
   'الإشراف · /warn، /warnings، /unwarn، /mute، /unmute، /timeout، /untimeout، /lock، /unlock، /kick، /ban، /unban',
   'الطلبات · /request submit للتقديم، /request status لمتابعة القرار',
   'الدعم · /ticket create لفتح تذكرة خاصة ثم claim أو close من داخلها',
-  'الألعاب · /game roulette، /game chairs، /game mafia، /game rps',
+  'الألعاب · /game roulette، /game chairs، /game mafia، /game rps، /game bag، /game shop',
   'السيرفر · /roles، /server، /ping، /rank، /top'
 ].join('\n');
 function parseChat(text) {

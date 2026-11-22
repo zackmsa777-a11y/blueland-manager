@@ -21,7 +21,7 @@ const guest = '100000000000000002';
 const spectator = '100000000000000099';
 const flushEdits = () => new Promise(resolve => setImmediate(resolve));
 
-function fixture(t) {
+function fixture(t, economy) {
   const timers = new Map();
   t.mock.method(global, 'setTimeout', callback => {
     const timer = {unref() { return this; }};
@@ -30,7 +30,7 @@ function fixture(t) {
   });
   t.mock.method(global, 'clearTimeout', timer => timers.delete(timer));
 
-  const gateway = createDiscordGames();
+  const gateway = createDiscordGames(economy);
   const pings = [];
   let panel;
   const message = {id: 'game-message', async edit(payload) { panel = payload; },
@@ -84,10 +84,10 @@ function fixture(t) {
   };
 }
 
-test('all four game choices are registered for Discord', () => {
+test('the four games and roulette economy commands are registered for Discord', () => {
   const command = commands.find(item => (item.toJSON?.() || item).name === 'game');
   assert.ok(command);
-  assert.deepEqual((command.toJSON?.() || command).options.map(option => option.name).sort(), ['chairs', 'mafia', 'roulette', 'rps']);
+  assert.deepEqual((command.toJSON?.() || command).options.map(option => option.name).sort(), ['bag', 'chairs', 'mafia', 'roulette', 'rps', 'shop']);
 });
 
 const avatar = id => `https://cdn.discordapp.com/avatars/${id}/test.png`;
@@ -149,14 +149,14 @@ test('roulette spins, pings only the selected player, validates removal and crow
   const invalid = await f.send(player, {customId: select.custom_id, values: [player]});
   assert.equal(invalid.flags, MessageFlags.Ephemeral);
   await f.send(player, {customId: select.custom_id, values: [other]});
-  assertPng(f.panel.files[0], 'roulette');
+  assertPng(f.panel.files[0], 'roulette', [820, 500]);
   assert.match(f.description, /الفائز/);
   const [winner] = f.panel.embeds;
   assert.equal(winner.title, '👑 الفائز بالروليت');
   assert.equal(winner.description, `<@${player}>`);
   assert.equal(winner.thumbnail.url, avatar(player));
   assert.equal(winner.url, `https://discord.com/users/${player}`);
-  assert.deepEqual(f.panel.components, []);
+  assert.deepEqual(f.panel.components[0].components.map(component => component.custom_id), ['blgshop:bag', 'blgshop:shop']);
   assert.equal(f.timers.size, 0);
 });
 
@@ -187,6 +187,33 @@ test('roulette random button removes an opponent, not the selected player', asyn
   const player = f.panel.content.match(/<@(\d+)>/)[1];
   await f.click(player, 'roulette-random');
   assert.equal(f.panel.embeds[0].description, `<@${player}>`);
+});
+
+test('roulette awards points to the winner, who can open a private bag and buy a frame', async t => {
+  const store = require('../src/store').openStore(':memory:');
+  t.after(() => store.close());
+  const f = fixture(t, store.roulette);
+  await f.open('roulette');
+  await f.click(guest, 'join');
+  await f.click(host, 'start');
+  await f.tick();
+  const player = f.panel.content.match(/<@(\d+)>/)[1];
+  const other = player === host ? guest : host;
+  await f.click(player, 'roulette-random');
+  assert.equal(store.roulette.profile(player).points, 10);
+  assert.equal(store.roulette.profile(other).points, 0);
+  assert.match(f.description, /\+10/);
+  assert.match(f.panel.embeds[0].footer.text, /\+10/);
+  const bag = await f.send(player, {commandName: 'game', options: {getSubcommand: () => 'bag'}});
+  assert.equal(bag.flags, MessageFlags.Ephemeral);
+  assert.match(bag.content, /\*\*10\*\*/);
+  store.roulette.award('another-game-1', player);
+  store.roulette.award('another-game-2', player);
+  const shop = await f.send(player, {customId: 'blgshop:shop'});
+  assert.equal(shop.flags, MessageFlags.Ephemeral);
+  const menu = shop.components[0].components[0];
+  await f.send(player, {customId: menu.custom_id, values: ['ice']});
+  assert.deepEqual(store.roulette.profile(player), {points: 0, equipped: 'ice', owned: ['classic', 'ice']});
 });
 
 test('chairs unlocks seats after music and resolves once every available seat is taken', async t => {

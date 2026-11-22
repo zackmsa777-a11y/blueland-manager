@@ -51,4 +51,25 @@ function rouletteLobbySvg(banner) {
   return svg(840, 290, '0 0 840 290', card);
 }
 
-module.exports = {COLORS, rouletteWheelSvg, rouletteLobbySvg};
+function rouletteWinnerSvg({name, avatar, reward, style}) {
+  const {color, dark} = style;
+  const portrait = avatar
+    ? `<image x="310" y="107" width="200" height="200" xlink:href="${avatar}" clip-path="url(#portrait)" preserveAspectRatio="xMidYMid slice"/>`
+    : text('BL', 410, 226, 62, '#edf6ff', 2);
+  const stars = Array.from({length: 66}, (_, i) => {
+    const x = 18 + (i * 137 % 782);
+    const y = 15 + (i * 83 % 470);
+    return `<circle cx="${x}" cy="${y}" r="${i % 7 === 0 ? 2.5 : 1}" fill="${color}" opacity="${i % 7 === 0 ? '.65' : '.34'}"/>`;
+  }).join('');
+  const body = `<defs><radialGradient id="winner-bg"><stop offset="0" stop-color="${dark}"/><stop offset="1" stop-color="#060e22"/></radialGradient>` +
+    '<clipPath id="portrait"><circle cx="410" cy="207" r="100"/></clipPath></defs>' +
+    `<rect x="6" y="6" width="808" height="488" rx="34" fill="url(#winner-bg)" stroke="${color}" stroke-width="2"/>` + stars +
+    `<circle cx="410" cy="207" r="125" fill="none" stroke="${color}" stroke-opacity=".44" stroke-width="2" stroke-dasharray="2 8"/>` +
+    `<circle cx="410" cy="207" r="105" fill="#102341" stroke="${color}" stroke-width="5"/>` + portrait +
+    '<path d="M365 91 L355 47 L386 66 L410 31 L433 66 L465 47 L455 91 Z M367 97 H453 V105 H367 Z" fill="#ffd975" stroke="#fff3c5" stroke-width="2.5" stroke-linejoin="round"/>' +
+    text('بطل الروليت', 410, 361, 30, color) + text(name, 410, 416, 44, '#edf6ff', 25) +
+    text(reward ? `+${reward} نقاط` : 'BLUE LAND', 410, 462, 23, color);
+  return svg(820, 500, '0 0 820 500', body);
+}
+
+module.exports = {COLORS, rouletteWheelSvg, rouletteLobbySvg, rouletteWinnerSvg};

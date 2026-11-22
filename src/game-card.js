@@ -146,7 +146,13 @@ function renderGameCard({ game, title, subtitle = '', footer = '', items = [], s
   return new Resvg(svg, {font}).render().asPng();
 }
 
-const {COLORS, rouletteWheelSvg, rouletteLobbySvg} = require('./roulette-art');
+const {COLORS, rouletteWheelSvg, rouletteLobbySvg, rouletteWinnerSvg} = require('./roulette-art');
+const {items: rouletteStyles} = require('./roulette-shop');
+
+function renderRouletteWinner({name, avatar, reward, style}) {
+  const scheme = Object.hasOwn(rouletteStyles, style) ? rouletteStyles[style] : rouletteStyles.classic;
+  return new Resvg(rouletteWinnerSvg({name, avatar, reward, style: scheme}), {font}).render().asPng();
+}
 
 function renderRouletteLobby(banner) {
   const artwork = banner || `data:image/jpeg;base64,${banners.roulette}`;
@@ -232,4 +238,4 @@ function renderRouletteSpin(names, selected) {
   return Buffer.concat([...frames, Buffer.from([0x3b])]);
 }
 
-module.exports = {renderGameCard, renderRouletteSpin, renderRouletteLobby, renderRouletteResult};
+module.exports = {renderGameCard, renderRouletteSpin, renderRouletteLobby, renderRouletteResult, renderRouletteWinner};

@@ -53,7 +53,7 @@ function connectDiscord(store, env) {
   const service = makeService(store, { context, change }, allowed);
   const gateway=communityGateway(readyGuild,context);
   const community=createCommunity(store,gateway,service);
-  const games=createDiscordGames();
+  const games=createDiscordGames(store.roulette);
   async function authorize(id) {
     const ctx = await context(id);
     service.checkOperator(ctx);

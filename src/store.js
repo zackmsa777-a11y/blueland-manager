@@ -36,6 +36,7 @@ function openStore(file) {
   }
   return {
     community: openCommunityStore(db),
+    roulette: require('./roulette-shop').openRouletteShop(db),
     byId,
     pending(target) {
       return hydrate(db.prepare("SELECT * FROM promotions WHERE target=? AND state='pending'").get(target));
