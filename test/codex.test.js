@@ -327,6 +327,44 @@ test('automatic history checks both the bot and member before fetching the chann
     assert.equal(fetches,0);assert.equal(h.calls[0].context.recentMessages,undefined);
   }
 });
+test('Discord chat sessions isolate operators and channels and reset scrollback while retaining saved memory',async t=>{
+  const h=fixture(t),calls=[],s=h.db.codex;
+  const handle=createCodexHandler({store:s,isAdmin:async()=>true,ask:async req=>{
+    calls.push(req);return {answer:'ok',actions:[],nativeThread:req.nativeSession==='new'?'thread-'+calls.length:req.nativeSession};
+  }});
+  const extras={channel:{sendTyping:async()=>{},permissionsFor:()=>({has:()=>true}),messages:{fetch:async()=>[
+    {id:'10',author:{username:'member'},attachments:{size:0},content:'old history'}
+  ]}}};
+  await handle(h.message('+ذاكرة حفظ استخدم العربية'));
+  const say=(id,opts={})=>handle(h.message('<@'+bot+'> hello',{id,...extras,...opts}));
+  await say('30');await say('31');await say('32',{channelId:'elsewhere'});await say('33',{author:{id:'owner'}});
+  assert.deepEqual(calls.map(x=>x.nativeSession),['new','thread-1','new','new']);
+  await handle(h.message('+جلسة'));assert.match(h.replies.at(-1).content,/رسائلك في الجلسة: 2/);
+  await handle(h.message('+جلسة جديدة',{id:'34'}));await say('35');
+  assert.equal(calls.at(-1).nativeSession,'new');assert.equal(calls.at(-1).context.recentMessages,undefined);
+  assert.equal(calls.at(-1).memoryNotes[0].note,'استخدم العربية');assert.equal(s.session(actor,channel).turns,1);
+});
+
+test('an authenticated steer supersedes a pending coding plan and reuses its native workspace thread',async t=>{
+  const h=fixture(t),calls=[],ops=[];
+  let ready,release;const waiting=new Promise(r=>{ready=r;}),gate=new Promise(r=>{release=r;});
+  const action=target=>({op:'workspace_read',target,value:'1',extra:''});
+  const handle=createCodexHandler({store:h.db.codex,isAdmin:async id=>id===actor,
+    workspace:async q=>{ops.push(q.target);return {text:'ok'};},ask:async q=>{
+      calls.push(q);
+      if (calls.length===1) return {actions:[action('README.md')],answer:'',nativeThread:'chat'};
+      if (calls.length===2) {ready();await gate;return {actions:[action('stale.js')],answer:'',nativeThread:'work'};}
+      return {answer:'done',actions:[],nativeThread:'work'};
+    }});
+  const run=handle(h.message('+code review this'));await waiting;
+  await handle(h.message('+وجه use the dashboard instead',{author:{id:'other'}}));
+  await handle(h.message('+وجه focus on Arabic'));release();await run;
+  assert.deepEqual(ops,['README.md']);
+  assert.match(calls.at(-1).prompt,/review this[\s\S]*focus on Arabic/);
+  assert.doesNotMatch(calls.at(-1).prompt,/dashboard/);
+  assert.equal(calls.at(-1).nativeSession,'work');assert.equal(h.replies.at(-1).content,'done');
+});
+
 function fixture(t) {
   const db=openStore(':memory:');t.after(()=>db.close());
   const replies=[],calls=[];

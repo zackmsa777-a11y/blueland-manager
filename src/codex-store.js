@@ -15,11 +15,27 @@ function openCodexStore(db) {
       progress TEXT NOT NULL DEFAULT '{"files":[],"steps":[]}',updated INTEGER NOT NULL,active INTEGER NOT NULL DEFAULT 1
     );
     CREATE TABLE IF NOT EXISTS codex_workspace_turns (message TEXT PRIMARY KEY,task TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS codex_chat_sessions (actor TEXT NOT NULL,channel TEXT NOT NULL,thread TEXT,
+      turns INTEGER NOT NULL DEFAULT 0,boundary TEXT,PRIMARY KEY(actor,channel));
   `);
   if (!db.prepare('PRAGMA table_info(codex_commands)').all().some(c=>c.name==='source'))
     db.exec("ALTER TABLE codex_commands ADD COLUMN source TEXT NOT NULL DEFAULT ''");
   function task(row) {return row?{...row,progress:JSON.parse(row.progress)}:null;}
   return {
+    session(actor,channel) {
+      return db.prepare('SELECT thread,turns,boundary FROM codex_chat_sessions WHERE actor=? AND channel=?').get(actor,channel)||{thread:null,turns:0,boundary:null};
+    },
+    countTurn(actor,channel) {
+      db.prepare('INSERT INTO codex_chat_sessions(actor,channel,turns) VALUES(?,?,1) ON CONFLICT(actor,channel) DO UPDATE SET turns=turns+1').run(actor,channel);
+    },
+    bindChat(actor,channel,thread) {db.prepare('UPDATE codex_chat_sessions SET thread=? WHERE actor=? AND channel=?').run(thread,actor,channel);},
+    newSession(actor,channel,boundary) {
+      db.prepare('INSERT INTO codex_chat_sessions(actor,channel,boundary) VALUES(?,?,?) ON CONFLICT(actor,channel) DO UPDATE SET thread=NULL,turns=0,boundary=excluded.boundary').run(actor,channel,boundary);
+    },
+    bindWork(task,actor,thread) {
+      task.progress.nativeThread=thread;task.progress.threadActor=actor;
+      db.prepare('UPDATE codex_workspace_tasks SET progress=? WHERE id=? AND active=1').run(JSON.stringify(task.progress),task.id);
+    },
     startTask(id,actor,channel,prompt) {
       db.prepare('INSERT OR IGNORE INTO codex_workspace_tasks(id,actor,channel,prompt,updated) VALUES(?,?,?,?,?)').run(id,actor,channel,prompt,Date.now());
       return this.taskFor(id,channel);

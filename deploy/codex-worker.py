@@ -49,6 +49,11 @@ Handlers run in an isolated JS interpreter without Node or network; Discord chan
 For an AI-driven feature, leave extra empty. +تخفيض already demotes one rank; explain it if requested.
 For forget_command use target=name. Existing recipes and supported operations are in context.
 When asked about switching models point to +model list and +model MODEL EFFORT.
+Conversation sessions are scoped to the operator and Discord channel or thread. +جلسة shows the
+current model and message count; +جلسة جديدة starts fresh. +استخدام privately shows live account
+limits. +ذاكرة حفظ TEXT saves a durable personal note. During active coding, a reply or +وجه TEXT
+updates the task at the next planning boundary. Only the latest authenticated request and its explicit
+clarifications authorize actions. Earlier conversation remains background even in a resumed session.
 vps_status reads services. vps_restart takes target bot or dashboard and must be the only action.
 When asked to publish source changes, explain the actual release commands in the user's language.
 For features the operators want to publish from Discord, edit config/discord-features.json in the workspace.
@@ -88,7 +93,7 @@ characters. Use only operations listed in context. Do not run Discord or release
 Use save_command to make a new Discord prefix command live. Do not invent tool calls or activity counts.
 Do not expose private staff records as examples. Plain Discord text, no mass mentions."""
 
-def model_list():
+def account_info(operation):
     proc = subprocess.Popen([CLI, "app-server"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                             stderr=subprocess.DEVNULL, text=True)
     def request(body):
@@ -104,6 +109,9 @@ def model_list():
     try:
         request({"id":1,"method":"initialize","params":{"clientInfo":{"name":"blueland","version":"1"}}})
         request({"method":"initialized","params":{}})
+        if operation=="usage":
+            limits=request({"id":2,"method":"account/rateLimits/read","params":{}})["rateLimits"]
+            return {k:limits.get(k) for k in ("planType","primary","secondary")}
         result = request({"id":2,"method":"model/list","params":{"limit":100}})
         return [{"id": m["id"], "efforts":[e["reasoningEffort"] for e in m["supportedReasoningEfforts"]]}
                 for m in result["data"]]
@@ -114,6 +122,10 @@ def model_list():
 def respond(data):
     model = data.pop("model")
     effort = data.pop("effort")
+    session = data.pop("nativeSession", None)
+    uuid = r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}"
+    if session is not None and session != "new" and not re.fullmatch(uuid,session):
+        raise ValueError("Invalid session")
     if not re.fullmatch(r"[a-zA-Z0-9._-]{1,80}", model) or effort not in {"low","medium","high","xhigh","max","ultra"}:
         raise ValueError("Invalid model configuration")
     action = {"type":"object", "additionalProperties":False,
@@ -133,15 +145,21 @@ def respond(data):
         schema_path = folder / "schema.json"
         output = folder / "answer.json"
         schema_path.write_text(json.dumps(schema))
-        args = [CLI, "exec", "--ignore-user-config", "--ignore-rules", "--ephemeral", "--skip-git-repo-check",
-                "-s", "read-only", "-m", model, "-c", 'model_reasoning_effort='+json.dumps(effort),
+        args = [CLI, "exec", "-s","read-only","-C","/tmp" if session else temp]
+        if session and session!="new":
+            args.append("resume")
+        args+=["--json"] if session else ["--ephemeral"]
+        args+=["--ignore-user-config", "--ignore-rules", "--skip-git-repo-check",
+                "-m", model, "-c", 'model_reasoning_effort='+json.dumps(effort),
                 "-c", 'web_search="disabled"', "-c", "project_doc_max_bytes=0",
-                "-c", "developer_instructions="+json.dumps(INSTRUCTIONS), "-C", temp,
+                "-c", "developer_instructions="+json.dumps(INSTRUCTIONS),
                 "--output-schema", str(schema_path), "--output-last-message", str(output)]
         for feature in ("shell_tool","unified_exec","view_image","image_generation","plugins","hooks","multi_agent","skill_search"):
             args += ["--disable",feature]
+        if session and session!="new":
+            args.append(session)
         result = subprocess.run(args+["-"], input=json.dumps(data,ensure_ascii=False), text=True,
-                                stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,timeout=155)
+                                stdout=subprocess.PIPE if session else subprocess.DEVNULL,stderr=subprocess.PIPE,timeout=155)
         if result.returncode:
             # Keep prompts, model output and credentials out of journald.
             print("Codex exec failed, exit code",result.returncode,file=sys.stderr)
@@ -153,7 +171,14 @@ def respond(data):
             if any(s in detail for s in ("stream disconnected","connection reset","bad gateway","service unavailable","timed out")):
                 raise RuntimeError("temporary")
             raise RuntimeError("Codex exec")
-        return json.loads(output.read_text())
+        answer=json.loads(output.read_text())
+        if session:
+            events=(json.loads(line) for line in result.stdout.splitlines() if line.startswith("{"))
+            thread=next((event.get("thread_id") for event in events if event.get("type")=="thread.started"),None)
+            if not thread or not re.fullmatch(uuid,thread) or session not in ("new",thread):
+                raise ValueError("Session mismatch")
+            answer["nativeThread"]=thread
+        return answer
 
 def main():
     raw = sys.stdin.buffer.readline(196609)
@@ -161,8 +186,8 @@ def main():
         raise ValueError("Request size")
     data = json.loads(raw)
     op = data.pop("operation")
-    if op=="models":
-        return model_list()
+    if op in ("models","usage"):
+        return account_info(op)
     if op=="respond":
         return respond(data)
     raise ValueError("Unknown operation")
