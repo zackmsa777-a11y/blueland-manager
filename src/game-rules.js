@@ -82,8 +82,40 @@ function resolveDuel(game) {
   if (score === 2) game.winner = id;
 }
 
+function spinRoulette(game, random = randomInt) {
+  game.roulettePlayer = pick(game.alive, random);
+  game.rouletteStage = 'spin';
+}
+
+function stopRoulette(game) {
+  if (game.phase !== 'play' || game.rouletteStage !== 'spin') return false;
+  game.rouletteStage = 'choose';
+  return true;
+}
+
+function rouletteTargets(game) {
+  return game.alive.filter(id => id !== game.roulettePlayer);
+}
+
+function resolveRoulette(game, user, action, target, random = randomInt) {
+  if (game.phase !== 'play' || game.rouletteStage !== 'choose' || user !== game.roulettePlayer) return false;
+  const targets = rouletteTargets(game);
+  const out = action === 'leave' ? user : action === 'random' ? pick(targets, random)
+    : action === 'kick' && targets.includes(target) ? target : null;
+  if (!out) return false;
+  eliminate(game, out);
+  game.round++;
+  game.rouletteStage = null;
+  game.roulettePlayer = null;
+  if (game.alive.length === 1) {
+    game.winner = game.alive[0];
+    game.phase = 'done';
+  }
+  return true;
+}
+
 function advance(game, random = randomInt) {
-  if (game.kind === 'roulette') eliminate(game, pick(game.alive, random));
+  if (game.kind === 'roulette') return;
   if (game.kind === 'chairs') {
     const waiting = game.alive.filter(id => !game.choices.has(id));
     eliminate(game, pick(waiting, random));
@@ -102,4 +134,5 @@ function advance(game, random = randomInt) {
   game.round++;
 }
 
-module.exports = {games, moves, createGame, start, eligiblePlayers, voteTargets, choose, ready, advance};
+module.exports = {games, moves, createGame, start, eligiblePlayers, voteTargets, choose, ready, advance,
+  spinRoulette, stopRoulette, rouletteTargets, resolveRoulette};

@@ -31,13 +31,15 @@ function fixture(t) {
   t.mock.method(global, 'clearTimeout', timer => timers.delete(timer));
 
   const gateway = createDiscordGames();
+  const pings = [];
   let panel;
-  const message = {id: 'game-message', async edit(payload) { panel = payload; }};
+  const message = {id: 'game-message', async edit(payload) { panel = payload; },
+    channel: {async send(payload) { pings.push(payload); }}};
 
   async function send(user, options) {
     let reply;
     const i = {
-      user: {id: user, username: `Player ${user.slice(-2)}`},
+      user: {id: user, username: `Player ${user.slice(-2)}`, displayAvatarURL: () => avatar(user)},
       channelId: 'games-room',
       message,
       ...options,
@@ -76,7 +78,7 @@ function fixture(t) {
   return {
     open: kind => send(host, {commandName: 'game', options: {getSubcommand: () => kind}}),
     click: (user, action) => send(user, {customId: button(action).custom_id}),
-    button, send, tick, timers,
+    button, send, tick, timers, pings,
     get panel() { return panel; },
     get description() { return panel.files[0].description; }
   };
@@ -88,7 +90,31 @@ test('all four game choices are registered for Discord', () => {
   assert.deepEqual((command.toJSON?.() || command).options.map(option => option.name).sort(), ['chairs', 'mafia', 'roulette', 'rps']);
 });
 
-test('roulette uses PNG panels, rejects old controls and finishes on one winner', async t => {
+const avatar = id => `https://cdn.discordapp.com/avatars/${id}/test.png`;
+
+function assertSpin(file) {
+  assert.equal(file.name, 'roulette-spin.gif');
+  const data = file.attachment;
+  assert.equal(data.toString('ascii', 0, 6), 'GIF89a');
+  let index = 13 + 3 * (2 ** ((data[10] & 7) + 1));
+  let frames = 0;
+  while (data[index] === 0x21) {
+    assert.deepEqual([...data.subarray(index, index + 4)], [0x21, 0xf9, 4, 4]);
+    index += 8;
+    assert.equal(data[index], 0x2c);
+    assert.equal(data.readUInt16LE(index + 5), 224);
+    assert.equal(data.readUInt16LE(index + 7), 224);
+    index += 11;
+    while (data[index]) index += 1 + data[index];
+    index++;
+    frames++;
+  }
+  assert.equal(frames, 18);
+  assert.equal(index, data.length - 1);
+  assert.equal(data[index], 0x3b);
+}
+
+test('roulette spins, pings only the selected player, validates removal and crowns the winner', async t => {
   const f = fixture(t);
   await f.open('roulette');
   assertPng(f.panel.files[0], 'roulette');
@@ -96,13 +122,65 @@ test('roulette uses PNG panels, rejects old controls and finishes on one winner'
   const oldJoin = f.button('join').custom_id;
   await f.click(guest, 'join');
   await f.click(host, 'start');
+  assertSpin(f.panel.files[0]);
+  assert.equal(f.pings.length, 0);
   const stale = await f.send(spectator, {customId: oldJoin});
   assert.equal(stale.flags, MessageFlags.Ephemeral);
   assert.match(stale.content, /انتهت/);
   await f.tick();
+  assertPng(f.panel.files[0], 'roulette');
+  const player = f.panel.content.match(/<@(\d+)>/)[1];
+  const other = player === host ? guest : host;
+  assert.equal(f.pings.length, 1);
+  assert.deepEqual(f.pings[0].allowedMentions, {parse: [], users: [player]});
+  assert.match(f.pings[0].content, new RegExp(`<@${player}>`));
+  const denied = await f.click(other, 'roulette-random');
+  assert.equal(denied.flags, MessageFlags.Ephemeral);
+  const menu = await f.click(player, 'roulette-kick');
+  assert.equal(menu.flags, MessageFlags.Ephemeral);
+  const select = menu.components[0].components[0];
+  assert.deepEqual(select.options.map(option => option.value), [other]);
+  const invalid = await f.send(player, {customId: select.custom_id, values: [player]});
+  assert.equal(invalid.flags, MessageFlags.Ephemeral);
+  await f.send(player, {customId: select.custom_id, values: [other]});
+  assertPng(f.panel.files[0], 'roulette');
   assert.match(f.description, /الفائز/);
+  const [winner] = f.panel.embeds;
+  assert.equal(winner.title, '👑 الفائز بالروليت');
+  assert.equal(winner.description, `<@${player}>`);
+  assert.equal(winner.thumbnail.url, avatar(player));
+  assert.equal(winner.url, `https://discord.com/users/${player}`);
   assert.deepEqual(f.panel.components, []);
   assert.equal(f.timers.size, 0);
+});
+
+test('a roulette withdrawal starts a new spin and an expired choice removes a random opponent', async t => {
+  const f = fixture(t);
+  await f.open('roulette');
+  await f.click(guest, 'join');
+  await f.click(spectator, 'join');
+  await f.click(host, 'start');
+  await f.tick();
+  const first = f.panel.content.match(/<@(\d+)>/)[1];
+  await f.click(first, 'roulette-leave');
+  assert.equal(f.panel.files[0].name, 'roulette-spin.gif');
+  await f.tick();
+  const second = f.panel.content.match(/<@(\d+)>/)[1];
+  assert.notEqual(second, first);
+  await f.tick();
+  assert.equal(f.panel.embeds[0].description, `<@${second}>`);
+  assert.equal(f.timers.size, 0);
+});
+
+test('roulette random button removes an opponent, not the selected player', async t => {
+  const f = fixture(t);
+  await f.open('roulette');
+  await f.click(guest, 'join');
+  await f.click(host, 'start');
+  await f.tick();
+  const player = f.panel.content.match(/<@(\d+)>/)[1];
+  await f.click(player, 'roulette-random');
+  assert.equal(f.panel.embeds[0].description, `<@${player}>`);
 });
 
 test('chairs unlocks seats after music and resolves once every available seat is taken', async t => {

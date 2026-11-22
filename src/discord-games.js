@@ -3,12 +3,17 @@
 const {randomInt, randomUUID} = require('node:crypto');
 const {MessageFlags} = require('discord.js');
 const {RuleError} = require('./ladder');
-const {games, moves, createGame, start, eligiblePlayers, choose, ready, advance} = require('./game-rules');
-const {gamePanel, privateRole, voteMenu} = require('./game-view');
+const {games, moves, createGame, start, eligiblePlayers, choose, ready, advance,
+  spinRoulette, stopRoulette, resolveRoulette} = require('./game-rules');
+const {gamePanel, privateRole, voteMenu, rouletteMenu} = require('./game-view');
 
 const privateReply = {flags: MessageFlags.Ephemeral, allowedMentions: {parse: []}};
-const durations = {lobby: 180_000, roulette: 5_000, chairs: 9_000, mafia: 35_000, rps: 25_000};
+const durations = {lobby: 180_000, chairs: 9_000, mafia: 35_000, rps: 25_000};
 const playerName = i => i.member?.displayName || i.member?.nick || i.user.globalName || i.user.username;
+const playerAvatar = i => {
+  const options = {extension: 'png', size: 128, forceStatic: true};
+  return i.member?.displayAvatarURL?.(options) || i.user.displayAvatarURL?.(options);
+};
 
 function createDiscordGames() {
   const rooms = new Map();
@@ -37,6 +42,7 @@ function createDiscordGames() {
     }).catch(err => {
       if ([10003, 10008, 50001, 50013].includes(err.code)) release(game);
     });
+    return game.edits;
   }
 
   function cancel(game, reason) {
@@ -44,6 +50,48 @@ function createDiscordGames() {
     game.endReason = reason;
     release(game);
     publish(game);
+  }
+
+  function rouletteTimer(game, delay, run) {
+    clearTimeout(game.timer);
+    const turn = game.round;
+    game.timer = setTimeout(() => {
+      if (active(game) && turn === game.round) run();
+    }, delay);
+    game.timer.unref();
+  }
+
+  function startSpin(game) {
+    spinRoulette(game);
+    const turn = game.round;
+    publish(game).then(() => {
+      if (!active(game) || game.round !== turn || game.rouletteStage !== 'spin') return;
+      rouletteTimer(game, 2_000, () => revealSpin(game));
+    });
+  }
+
+  function revealSpin(game) {
+    if (!stopRoulette(game)) return;
+    const turn = game.round;
+    const player = game.roulettePlayer;
+    publish(game).then(async () => {
+      if (!active(game) || game.round !== turn || game.rouletteStage !== 'choose') return;
+      rouletteTimer(game, 20_000, () => finishSpin(game, player, 'random'));
+      if (typeof game.message.channel?.send !== 'function') return;
+      const panel = game.message.url ? ` [افتح لوحة الجولة](<${game.message.url}>)` : '';
+      await game.message.channel.send({content: `<@${player}> وقفت العجلة عليك! قدّامك 20 ثانية تختار.${panel}`,
+        allowedMentions: {parse: [], users: [player]}}).catch(() => {});
+    });
+  }
+
+  function finishSpin(game, user, action, target) {
+    if (!resolveRoulette(game, user, action, target)) return false;
+    clearTimeout(game.timer);
+    if (game.phase === 'done') {
+      release(game);
+      publish(game);
+    } else startSpin(game);
+    return true;
   }
 
   function round(game) {
@@ -89,7 +137,8 @@ function createDiscordGames() {
     if (!Object.hasOwn(games, kind)) throw new RuleError('اختر لعبة من أمر /game.');
     if (rooms.has(i.channelId)) throw new RuleError('في لعبة مفتوحة في الروم. انضم لها أو انتظر نهايتها.');
     const game = Object.assign(createGame(kind, i.user.id, playerName(i)), {
-      id: randomUUID(), room: i.channelId, idleRounds: 0, version: 0, edits: Promise.resolve()
+      id: randomUUID(), room: i.channelId, idleRounds: 0, version: 0, edits: Promise.resolve(),
+      avatars: new Map([[i.user.id, playerAvatar(i)]])
     });
     rooms.set(game.room, game);
     try {
@@ -107,8 +156,9 @@ function createDiscordGames() {
     const [, id, roundId, action] = i.customId.split(':');
     const user = i.user.id;
     const fail = content => i.reply({...privateReply, content});
+    const select = action === 'target' || action === 'roulette-target';
     if (!game?.message || game.id !== id || String(game.round) !== roundId ||
-        (action === 'target' ? !i.isStringSelectMenu() : !i.isButton() || game.message.id !== i.message.id)) {
+        (select ? !i.isStringSelectMenu() : !i.isButton() || game.message.id !== i.message.id)) {
       return fail('هذي اللوحة أو الجولة انتهت. استخدم اللوحة الحالية.');
     }
     const lobby = game.phase === 'lobby';
@@ -124,18 +174,33 @@ function createDiscordGames() {
         if (game.players.has(user)) return fail('أنت مسجل في اللعبة.');
         if (game.players.size >= max) return fail('اكتمل عدد اللاعبين.');
         game.players.set(user, playerName(i));
+        game.avatars.set(user, playerAvatar(i));
       } else if (action === 'leave') {
         if (user === game.host) return fail('استخدم زر إلغاء لو حاب تقفل تسجيل اللعبة.');
         if (!game.players.delete(user)) return fail('أنت مو مسجل في اللعبة.');
+        game.avatars.delete(user);
       } else if (action === 'start') {
         if (user !== game.host) return fail('مضيف اللعبة هو اللي يبدأها.');
         if (game.players.size < min) return fail(`اللعبة تحتاج ${min} لاعبين على الأقل.`);
+        const ack = i.deferUpdate();
         start(game);
-        schedule(game);
+        if (game.kind === 'roulette') startSpin(game);
+        else {
+          schedule(game);
+          publish(game);
+        }
+        return ack;
       } else return fail('اللعبة ما بدأت لسه.');
       const ack = i.deferUpdate();
       publish(game);
       return ack;
+    }
+    if (game.kind === 'roulette') {
+      if (game.rouletteStage !== 'choose' || user !== game.roulettePlayer) return fail('الاختيار للاعب اللي وقفت عليه العجلة بس.');
+      if (action === 'roulette-kick') return i.reply({...privateReply, ...rouletteMenu(game)});
+      const choice = {'roulette-target': 'kick', 'roulette-leave': 'leave', 'roulette-random': 'random'}[action];
+      if (!choice || !finishSpin(game, user, choice, i.values?.[0])) return fail('الاختيار غير متاح في هذي الجولة.');
+      return select ? i.update({content: 'تم إخراج اللاعب من اللعبة.', components: []}) : i.deferUpdate();
     }
     if (game.kind === 'mafia' && action === 'role') {
       if (!game.players.has(user)) return fail('بطاقات الأدوار للاعبين المسجلين.');

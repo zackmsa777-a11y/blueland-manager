@@ -146,4 +146,93 @@ function renderGameCard({ game, title, subtitle = '', footer = '', items = [], s
   return new Resvg(svg, {font}).render().asPng();
 }
 
-module.exports = { renderGameCard };
+const spinColors = [0x09152e, 0x0d2142, 0x173c70, 0x9fd5ff, 0x18518c, 0x303f7a, 0x247289, 0x445a90,
+  0xf7f4ff, 0x101b33, 0x397da8, 0x5fa5f4, 0x243661, 0x112748, 0xe5b460, 0x0a1327];
+const digits = ['111101101101111', '010110010010111', '111001111100111', '111001111001111', '101101111001001',
+  '111100111001111', '111100111101111', '111001010010010', '111101111101111', '111101111001111'];
+
+function gifImage(pixels, side, delay) {
+  const descriptor = Buffer.from([0x21, 0xf9, 4, 4, delay, 0, 0, 0, 0x2c, 0, 0, 0, 0, side & 255, side >> 8, side & 255, side >> 8, 0, 4]);
+  // Reset before the dictionary can grow past 5-bit codes. Each pixel is a palette index.
+  const packed = Buffer.alloc(Math.ceil((pixels.length + Math.ceil(pixels.length / 14) + 1) * 5 / 8));
+  let bits = 0;
+  let value = 0;
+  let offset = 0;
+  const code = n => {
+    value |= n << bits;
+    bits += 5;
+    if (bits >= 8) {
+      packed[offset++] = value & 255;
+      value >>= 8;
+      bits -= 8;
+    }
+  };
+  for (let i = 0; i < pixels.length; i++) {
+    if (i % 14 === 0) code(16);
+    code(pixels[i]);
+  }
+  code(17);
+  if (bits) packed[offset++] = value;
+  const blocks = [descriptor];
+  for (let i = 0; i < offset; i += 255) {
+    const data = packed.subarray(i, Math.min(i + 255, offset));
+    blocks.push(Buffer.from([data.length]), data);
+  }
+  blocks.push(Buffer.from([0]));
+  return Buffer.concat(blocks);
+}
+
+function renderRouletteSpin(playerCount, selected) {
+  const side = 224;
+  const center = side / 2;
+  const count = Math.max(2, Math.min(16, playerCount));
+  const tau = 2 * Math.PI;
+  const step = tau / count;
+  const finalAngle = -Math.PI / 2 - (selected + 0.5) * step;
+  const header = Buffer.alloc(13);
+  header.write('GIF89a');
+  header.writeUInt16LE(side, 6);
+  header.writeUInt16LE(side, 8);
+  header[10] = 0xf3;
+  const paletteBytes = Buffer.from(spinColors.flatMap(color => [color >> 16, (color >> 8) & 255, color & 255]));
+  const frames = [header, paletteBytes];
+  for (let frame = 0; frame < 18; frame++) {
+    const last = frame === 17;
+    const angle = finalAngle - 2 * tau * (1 - frame / 17) ** 2;
+    const pixels = Buffer.alloc(side * side);
+    for (let y = 0; y < side; y++) {
+      for (let x = 0; x < side; x++) {
+        const dx = x - center;
+        const dy = y - center;
+        const radius = dx * dx + dy * dy;
+        let color = (x * 53 + y * 71 + x * y) % 301 === 1 ? 11 : 0;
+        if (radius <= 103 ** 2 && radius > 98 ** 2) color = 3;
+        else if (radius <= 98 ** 2) {
+          const sector = ((Math.atan2(dy, dx) - angle + 4 * tau) % tau) / step;
+          const index = Math.floor(sector);
+          color = sector % 1 < 0.025 ? 9 : last && index === selected ? 10 : 4 + index % 4;
+          if (radius < 20 ** 2) color = radius > 17 ** 2 || radius < 5 ** 2 ? 3 : 15;
+        }
+        if (y >= 6 && y <= 28 && Math.abs(dx) <= (28 - y) / 2) color = 14;
+        pixels[y * side + x] = color;
+      }
+    }
+    for (let i = 0; i < count; i++) {
+      const a = angle + (i + 0.5) * step;
+      const label = String(i + 1);
+      const x = Math.round(center + 71 * Math.cos(a) - label.length * 4);
+      const y = Math.round(center + 71 * Math.sin(a) - 5);
+      for (let digit = 0; digit < label.length; digit++) {
+        for (let p = 0; p < 15; p++) {
+          if (digits[label[digit]][p] !== '1') continue;
+          const at = (y + 2 * Math.floor(p / 3)) * side + x + digit * 8 + 2 * (p % 3);
+          pixels[at] = pixels[at + 1] = pixels[at + side] = pixels[at + side + 1] = 8;
+        }
+      }
+    }
+    frames.push(gifImage(pixels, side, last ? 40 : 8));
+  }
+  return Buffer.concat([...frames, Buffer.from([0x3b])]);
+}
+
+module.exports = { renderGameCard, renderRouletteSpin };
