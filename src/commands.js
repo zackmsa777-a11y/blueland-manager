@@ -81,7 +81,12 @@ function commandRunner({store,community,promotions,readyGuild,pair}) {
     if (action==='dashboard') return pair(actor);
     if (action==='promote' || action==='demote') {
       const entry=await promotions.execute({id:delivery,actor,target:input.target,source:'discord',direction:action});
-      return (action==='demote'?'تم تخفيض':'تمت ترقية')+' <@'+input.target+'> إلى **'+roles.get(entry.plan.to).label+'**.';
+      const next = roles.get(entry.plan.to).label;
+      if (action === 'demote') {
+        const previous = roles.get(entry.plan.from)?.label || 'خارج السلّم';
+        return 'تم تخفيض <@' + input.target + '> من **' + previous + '** إلى **' + next + '**.';
+      }
+      return 'تمت ترقية <@' + input.target + '> إلى **' + next + '**.';
     }
     if (action==='rank' || action==='top') {
       if (!db.settings().levels) throw new RuleError('نظام المستويات متوقف. يمكن لإدارة السيرفر تفعيله من لوحة الطاقم.');

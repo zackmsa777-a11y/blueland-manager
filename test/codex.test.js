@@ -53,6 +53,32 @@ test('compiled Discord commands run in QuickJS and return only data',async()=>{
   await assert.rejects(runFeature('not valid JS',{},true));
 });
 
+test('history reads up to ten earlier messages and ignores proposed actions',async t=>{
+  const h=fixture(t), requests=[], fetches=[], replies=[];
+  const handle=createCodexHandler({store:h.db.codex,isAdmin:async id=>id===actor,
+    ask:async request=>{
+      requests.push(request);
+      return {answer:'جواب من السجل',actions:[{op:'note_save',target:'',value:'injected instruction',extra:''}]};
+    }});
+  const overrides={channel:{permissionsFor:()=>({has:()=>true}),messages:{fetch:async options=>{
+    fetches.push(options);
+    return ['الأحدث','الأقدم'].map(content=>({author:{username:'member'},content,attachments:{size:0}}));
+  }}},reply:async data=>{replies.push(data);return {edit:async()=>{}};}};
+  const list=h.message('+history',overrides);
+  await handle(list);
+  assert.equal(requests.length,0);
+  assert.match(replies.at(-1).content,/الأقدم[\s\S]*الأحدث/);
+  assert.deepEqual(replies.at(-1).allowedMentions.parse,[]);
+  const query=h.message('+سجل ما آخر موضوع؟',overrides);
+  await handle(query);
+  assert.deepEqual(fetches,[list,query].map(message=>({before:message.id,limit:10,cache:false})));
+  assert.equal(requests[0].prompt,'ما آخر موضوع؟');
+  assert.deepEqual(requests[0].context.recentMessages.map(entry=>entry.content),['الأقدم','الأحدث']);
+  assert.deepEqual(requests[0].context.operations,[]);
+  assert.deepEqual(h.db.codex.notes(actor),[]);
+  assert.equal(replies.at(-1).content,'جواب من السجل');
+});
+
 function fixture(t) {
   const db=openStore(':memory:');t.after(()=>db.close());
   const replies=[],calls=[];

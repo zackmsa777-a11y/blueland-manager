@@ -9,10 +9,18 @@ function openCodexStore(db) {
     CREATE TABLE IF NOT EXISTS codex_notes (id INTEGER PRIMARY KEY, actor TEXT NOT NULL, note TEXT NOT NULL, UNIQUE(actor,note));
     CREATE TABLE IF NOT EXISTS codex_deliveries (id TEXT PRIMARY KEY, actor TEXT NOT NULL, created INTEGER NOT NULL, status TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS codex_confirmations (message TEXT PRIMARY KEY, actor TEXT NOT NULL, channel TEXT NOT NULL, expires INTEGER NOT NULL, actions TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS codex_context_cursors (actor TEXT NOT NULL, channel TEXT NOT NULL, message TEXT NOT NULL, PRIMARY KEY(actor,channel));
   `);
   if (!db.prepare('PRAGMA table_info(codex_commands)').all().some(c=>c.name==='source'))
     db.exec("ALTER TABLE codex_commands ADD COLUMN source TEXT NOT NULL DEFAULT ''");
+  const getCursor=db.prepare('SELECT message FROM codex_context_cursors WHERE actor=? AND channel=?');
+  const setCursor=db.prepare(`INSERT INTO codex_context_cursors VALUES(?,?,?)
+    ON CONFLICT(actor,channel) DO UPDATE SET message=excluded.message`);
+  const getDelivery=db.prepare('SELECT 1 FROM codex_deliveries WHERE id=?');
   return {
+    contextCursor: (actor,channel) => getCursor.get(actor,channel)?.message,
+    saveContextCursor: (actor,channel,message) => setCursor.run(actor,channel,message),
+    isCodexRequest: id => Boolean(getDelivery.get(id)),
     notes: actor=>db.prepare('SELECT id,note FROM codex_notes WHERE actor=? ORDER BY id').all(actor),
     note(actor,note) {
       note=String(note).trim();
