@@ -1,0 +1,35 @@
+[Unit]
+Description=Hermes Agent for BlueLand Discord
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=blueland-hermes
+Group=blueland-hermes
+StateDirectory=blueland-hermes
+StateDirectoryMode=0750
+WorkingDirectory=/var/lib/blueland-hermes
+Environment=HOME=/var/lib/blueland-hermes
+Environment=HERMES_HOME=/var/lib/blueland-hermes
+Environment=DISCORD_ALLOWED_USERS=1032396905537355846,1486306919324057682
+Environment=BLUELAND_GUILD_ID=1573975432838127708
+Environment=DISCORD_COMMAND_SYNC_POLICY=safe
+Environment=PYTHONDONTWRITEBYTECODE=1
+EnvironmentFile=/etc/blueland-hermes/discord.env
+ExecStart=/opt/blueland-hermes/venv/bin/hermes gateway run
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+CapabilityBoundingSet=
+InaccessiblePaths=-/etc/blueland -/etc/blueland-hermes -/etc/blueland-publish -/var/lib/blueland -/run/docker.sock -/run/snapd.socket
+
+[Install]
+WantedBy=multi-user.target

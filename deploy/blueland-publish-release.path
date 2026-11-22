@@ -1,9 +1,0 @@
-[Unit]
-Description=Activate a feature release committed by BlueLand
-
-[Path]
-PathChanged=/var/lib/blueland-publish/wanted
-Unit=blueland-release.service
-
-[Install]
-WantedBy=multi-user.target

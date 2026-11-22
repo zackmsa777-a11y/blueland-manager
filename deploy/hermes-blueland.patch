@@ -1,0 +1,24 @@
+--- a/plugins/platforms/discord/adapter.py
++++ b/plugins/platforms/discord/adapter.py
+@@ -1461,2 +1461,12 @@
+             self._last_dispatched_event_monotonic = None
++            # BlueLand owns its guild-scoped application commands. Hermes owns global commands.
++            upstream_check = self._client.tree.interaction_check
++            async def blueland_command(interaction):
++                guild = interaction.guild
++                if interaction.data.get("guild_id") or (guild and str(guild.id) != os.environ["BLUELAND_GUILD_ID"]):
++                    return False
++                if guild and not interaction.permissions.administrator:
++                    return False
++                return await upstream_check(interaction)
++            self._client.tree.interaction_check = blueland_command
+             adapter_self = self  # capture for closure
+@@ -1633,2 +1643,8 @@
+         """Return ``(admitted, role_authorized)`` for one Discord event."""
++        guild = getattr(message, "guild", None)
++        if (message.content or "").lstrip().startswith("+"):
++            return False, False
++        if guild and (str(guild.id) != os.environ["BLUELAND_GUILD_ID"]
++                      or not getattr(getattr(message.author, "guild_permissions", None), "administrator", False)):
++            return False, False
+         message_id = str(getattr(message, "id", ""))

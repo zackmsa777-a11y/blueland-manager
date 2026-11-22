@@ -58,13 +58,13 @@ def activate(path):
     raise RuntimeError("Discord readiness timed out")
 
 
-def publish(expected=None):
+def publish():
     previous = CURRENT.resolve(strict=True)
     active = version(previous)
     target = ""
     try:
         report("checking", active, target)
-        target = expected or output(GIT + ["ls-remote", "--exit-code", REPO, "refs/heads/main"]).split()[0]
+        target = output(GIT + ["ls-remote", "--exit-code", REPO, "refs/heads/main"]).split()[0]
         if not re.fullmatch(r"[0-9a-f]{40}", target):
             raise ValueError("Invalid main revision")
         destination = ROOT / target
@@ -104,27 +104,4 @@ def publish(expected=None):
 
 
 if __name__ == "__main__":
-    wanted = pathlib.Path("/var/lib/blueland-publish/wanted")
-    def requested():
-        try:
-            return wanted.read_text()
-        except FileNotFoundError:
-            return ""
-    while True:
-        started = requested()
-        receipt=ROOT/"approved-result"
-        pinned=started if started and (not receipt.exists() or receipt.read_text().strip()!=started) else None
-        try:
-            publish(pinned)
-        except Exception:
-            if started != requested():
-                continue
-            raise
-        finally:
-            if pinned:
-                # A terminal failure also permits the operators to approve a corrective release.
-                pending=ROOT/".approved-result.next"
-                pending.write_text(pinned+"\n")
-                pending.replace(receipt)
-        if started == requested():
-            break
+    publish()

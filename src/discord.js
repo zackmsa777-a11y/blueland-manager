@@ -3,8 +3,7 @@
 const { catalog, RuleError } = require('./ladder');
 const { createMessageHandler } = require('./chat');
 const { liveDirectory } = require('./directory');
-const { makeService, hasCodexAccess } = require('./promotions');
-const { createCodexHandler } = require('./codex-chat');
+const { makeService } = require('./promotions');
 const { createCommunity } = require('./community');
 const { communityGateway } = require('./discord-community');
 const { commandRunner, parseChat, registerCommands, interactionInput, commands } = require('./commands');
@@ -36,7 +35,7 @@ function connectDiscord(store, env) {
       ]);
       const found = new Map(members.map(m => [m.user.id, person(m)]));
       return { roles: new Map(all.map(r => [r.id, r])), actor: found.get(actorId), target: found.get(targetId),
-        bot: found.get(client.user.id), ownerId: guild.ownerId, operatorId: env.CODEX_OPERATOR_ID };
+        bot: found.get(client.user.id), ownerId: guild.ownerId, operatorId: env.DEMOTION_OPERATOR_ID || env.CODEX_OPERATOR_ID };
     } catch (err) {
       if (err.code === 10007 || err.code === 10013) throw new RuleError('العضو غير موجود في سيرفر BlueLand.', 404);
       if (err.code === 50001 || err.code === 50013) throw new RuleError('تعذّرت قراءة العضو أو الرولات بصلاحيات البوت الحالية.', 403);
@@ -69,12 +68,7 @@ function connectDiscord(store, env) {
     return 'رمز دخول لوحة BlueLand، صالح لخمس دقائق:\n'+code+(env.PUBLIC_ORIGIN?'\n'+env.PUBLIC_ORIGIN:'');
   }
   const run=commandRunner({store,community,promotions:service,readyGuild,pair});
-  async function isAdmin(actor) {
-    const ctx=await context(actor);
-    return hasCodexAccess(ctx);
-  }
-  const codex=createCodexHandler({store:store.codex,isAdmin,run});
-  const onMessage=createMessageHandler({authorize:community.dashboard,service,store,publicOrigin:env.PUBLIC_ORIGIN,run,parse:parseChat,codex});
+  const onMessage=createMessageHandler({authorize:community.dashboard,service,store,publicOrigin:env.PUBLIC_ORIGIN,run,parse:parseChat});
   let syncing=false;
   async function sync() {
     if (syncing || connection.slashReady===commands.length) return;
@@ -106,7 +100,8 @@ function connectDiscord(store, env) {
       client.on(api.Events.MessageCreate, onMessage);
       client.on(api.Events.ChannelDelete,c=>{if (c.guildId===catalog.guildId) store.community.ticketRemoved(c.id);});
       client.on(api.Events.InteractionCreate, async i=>{
-        if (!i.isChatInputCommand() || i.guildId!==catalog.guildId || !commands.some(c=>c.name===i.commandName)) return;
+        if (!i.isChatInputCommand() || i.guildId!==catalog.guildId || i.commandGuildId!==catalog.guildId ||
+            !commands.some(c=>c.name===i.commandName)) return;
         try {
           await i.deferReply({flags:api.MessageFlags.Ephemeral});
           await i.editReply({content:await run(interactionInput(i)),allowedMentions:{parse:[]}});
@@ -130,13 +125,8 @@ function connectDiscord(store, env) {
         connection = { code: 'online', text: 'البوت متصل', slashReady:0, slashTotal:commands.length, contentEnabled, membersEnabled };
         recover().catch(() => {});
         sync().catch(()=>{});
-        const resumeCoding=()=>codex.recover(async (channel,id)=>{
-          const room=await readyGuild().channels.fetch(channel);
-          return room.messages.fetch({message:id,cache:false});
-        }).catch(()=>{});
-        resumeCoding();
         clearInterval(timer);
-        timer = setInterval(() => { recover().catch(() => {}); sync().catch(()=>{}); resumeCoding(); }, 60_000);
+        timer = setInterval(() => { recover().catch(() => {}); sync().catch(()=>{}); }, 60_000);
         timer.unref();
       });
       client.on(api.Events.Error, () => {});

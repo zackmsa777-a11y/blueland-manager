@@ -35,7 +35,6 @@ function openStore(file) {
     return code;
   }
   return {
-    codex: require('./codex-store').openCodexStore(db),
     community: openCommunityStore(db),
     byId,
     pending(target) {

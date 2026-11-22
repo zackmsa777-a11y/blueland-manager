@@ -1,0 +1,17 @@
+model:
+  provider: openai-codex
+  default: gpt-6.2-sol
+agent:
+  reasoning_effort: high
+group_sessions_per_user: true
+thread_sessions_per_user: true
+platform_toolsets:
+  cli: [memory, todo]
+  discord: [memory, todo, discord, discord_admin]
+discord:
+  require_mention: true
+  auto_thread: false
+  history_backfill: true
+  history_backfill_limit: 10
+display:
+  tool_progress_command: true
