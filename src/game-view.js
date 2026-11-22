@@ -68,7 +68,7 @@ function controls(game) {
 }
 
 function cardFile(card, description) {
-  return {attachment: Buffer.from(renderGameCard(card)), name: `${card.game}.svg`, description};
+  return {attachment: renderGameCard(card), name: `${card.game}.png`, description};
 }
 
 function gamePanel(game) {

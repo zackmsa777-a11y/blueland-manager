@@ -1,7 +1,16 @@
 'use strict';
 
+const {readFileSync} = require('node:fs');
+const {join} = require('node:path');
+const {Resvg} = require('@resvg/resvg-js');
+const assets = join(__dirname, 'game-assets');
+const banners = Object.fromEntries(['roulette', 'mafia', 'chairs'].map(game =>
+  [game, readFileSync(join(assets, game + '.jpg')).toString('base64')]));
+const font = {loadSystemFonts: false, fontFiles: [join(assets, 'IBMPlexSansArabic-Bold.ttf')],
+  defaultFontFamily: 'IBM Plex Sans Arabic'};
+
 const palette = {
-  roulette: { accent: '#fbca77', dark: '#27182b', colors: ['#b45766', '#5655a9', '#29798c', '#95612c'] },
+  roulette: { accent: '#9fd5ff', dark: '#102c51', colors: ['#18518c', '#303f7a', '#247289', '#445a90'] },
   chairs: { accent: '#80e1ff', dark: '#0b243e', colors: ['#23567c', '#224564'] },
   mafia: { accent: '#f99cb4', dark: '#2b152b', colors: ['#6d3657', '#543451'] },
   rps: { accent: '#a8e7ab', dark: '#132d34' }
@@ -32,7 +41,7 @@ function wheel(items, selected, theme) {
   const wedges = Array.from({ length: count }, (_, index) => {
     const start = rotation + index * step;
     const end = start + step;
-    const fill = index === selected ? '#8c5227' : theme.colors[index % theme.colors.length];
+    const fill = index === selected ? '#397da8' : theme.colors[index % theme.colors.length];
     const [labelX, labelY] = point(x, y, 84, start + step / 2).split(' ');
     return `<path d="M ${x} ${y} L ${point(x, y, 119, start)} A 119 119 0 0 1 ${point(x, y, 119, end)} Z" fill="${fill}" stroke="#15152b" stroke-width="2"/>` +
       caption(index + 1, labelX, Number(labelY) + 5, 17, { limit: 2 });
@@ -46,7 +55,7 @@ function wheel(items, selected, theme) {
     const top = 145 + row * 30;
     const active = index === selected;
     const badge = active ? theme.accent : '#959eba';
-    return `<rect x="${left}" y="${top}" width="${width}" height="25" rx="8" fill="${active ? '#623b28' : '#101b33'}"/>` +
+    return `<rect x="${left}" y="${top}" width="${width}" height="25" rx="8" fill="${active ? '#245071' : '#101b33'}"/>` +
       caption(index + 1, left + 18, top + 17, 12, { color: badge, limit: 2 }) +
       caption(item.label, left + width / 2 + 9, top + 17, 15, { limit: items.length > 8 ? 14 : 26 });
   }).join('');
@@ -121,14 +130,20 @@ function renderGameCard({ game, title, subtitle = '', footer = '', items = [], s
   const theme = palette[game];
   const visible = items.slice(0, 16);
   const illustration = boards[game](visible, game === 'mafia' ? role : selected, theme);
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="820" height="500" viewBox="0 0 820 500" role="img" aria-labelledby="card-title card-description">` +
+  const banner = banners[game];
+  const offset = banner ? 220 : 0;
+  const height = 500 + offset;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="820" height="${height}" viewBox="0 0 820 ${height}" role="img" aria-labelledby="card-title card-description">` +
     `<title id="card-title">${escapeXml(title, 80)}</title><desc id="card-description">${escapeXml([subtitle, footer].filter(Boolean).join(' · '), 150)}</desc>` +
     `<defs><linearGradient id="background" x2="1" y2="1" gradientUnits="objectBoundingBox"><stop offset="0" stop-color="${theme.dark}"/><stop offset="1" stop-color="#0b1326"/></linearGradient><pattern id="stars" width="24" height="24" patternUnits="userSpaceOnUse"><circle cx="2" cy="2" r="1" fill="${theme.accent}" opacity=".13"/></pattern></defs>` +
-    `<rect width="820" height="500" rx="29" fill="url(#background)"/><rect width="820" height="500" rx="29" fill="url(#stars)"/><rect x="13" y="13" width="794" height="474" rx="23" fill="none" stroke="${theme.accent}" stroke-opacity=".35"/>` +
-    '<g font-family="Noto Sans Arabic, Tahoma, Arial, sans-serif" font-weight="700">' +
-    caption(title, 410, 66, 35, { color: theme.accent, limit: 34 }) + caption(subtitle, 410, 105, 19, { limit: 56 }) + illustration +
+    `<rect width="820" height="${height}" fill="url(#background)"/><rect width="820" height="${height}" fill="url(#stars)"/>` +
+    (banner ? `<image width="820" height="286" xlink:href="data:image/jpeg;base64,${banner}"/>` : '') +
+    `<g transform="translate(0 ${offset})" font-family="IBM Plex Sans Arabic" font-weight="700">` +
+    (banner && !role ? '' : caption(title, 410, banner ? 113 : 66, 35, { color: theme.accent, limit: 34 })) +
+    caption(subtitle, 410, 105, 19, { limit: 56 }) + illustration +
     `<path d="M 62 422 H 758" stroke="${theme.accent}" stroke-opacity=".35"/>` +
     caption(footer, 410, 455, 18, { limit: 62 }) + '</g></svg>';
+  return new Resvg(svg, {font}).render().asPng();
 }
 
 module.exports = { renderGameCard };

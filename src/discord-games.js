@@ -30,11 +30,10 @@ function createDiscordGames() {
   }
 
   function publish(game) {
-    const panel = {...gamePanel(game), attachments: []};
     const version = ++game.version;
     game.edits = game.edits.then(async () => {
       if (version !== game.version) return;
-      await game.message.edit(panel);
+      await game.message.edit({...gamePanel(game), attachments: []});
     }).catch(err => {
       if ([10003, 10008, 50001, 50013].includes(err.code)) release(game);
     });
