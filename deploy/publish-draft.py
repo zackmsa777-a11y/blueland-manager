@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import sqlite3
 import subprocess
 import sys
@@ -23,6 +24,13 @@ BOT = "1573988210185347223"
 
 class PublishError(Exception):
     pass
+
+
+def configure_ssh():
+    identity = Path(os.environ["CREDENTIALS_DIRECTORY"]) / "github_key"
+    os.environ["GIT_SSH_COMMAND"] = shlex.join(["/usr/bin/ssh","-F","/dev/null","-o","BatchMode=yes",
+        "-o","IdentitiesOnly=yes","-o","ConnectTimeout=10","-o","StrictHostKeyChecking=yes",
+        "-o","UserKnownHostsFile=/etc/blueland-publish/known_hosts","-i",str(identity)])
 
 
 def git(args, data=None, env=None):
@@ -139,6 +147,7 @@ def merge(request):
 
 
 def main():
+    configure_ssh()
     raw = sys.stdin.buffer.readline(55001)
     if len(raw)>55000 or not raw.endswith(b"\n"):
         raise PublishError("طلب النشر أكبر من الحد.")

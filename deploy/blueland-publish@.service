@@ -10,7 +10,6 @@ WorkingDirectory=/var/lib/blueland-publish
 ExecStart=/usr/bin/python3 -I /usr/local/libexec/blueland-publish.py
 LoadCredential=bot.env:/etc/blueland/bot.env
 LoadCredential=github_key:/etc/blueland-publish/github_key
-Environment="GIT_SSH_COMMAND=/usr/bin/ssh -F /dev/null -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/etc/blueland-publish/known_hosts -i %d/github_key"
 Environment=GIT_TERMINAL_PROMPT=0
 Environment=GIT_CONFIG_NOSYSTEM=1
 Environment=GIT_CONFIG_GLOBAL=/dev/null
