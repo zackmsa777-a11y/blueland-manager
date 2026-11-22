@@ -11,12 +11,13 @@ const confirmationLifetime = 120_000;
 function createBulkRole({ readyGuild, reservedRole = () => false, now = Date.now }) {
   let active = false;
   let pending = null;
-  return async function grant({ actor, roleId, delivery, channel, confirmation }) {
+  return async function grant({ actor, roleId, delivery, channel, confirmation, audience = 'members' }) {
     const guild = readyGuild();
     function checkOwner() {
-      if (actor !== guild.ownerId) throw new RuleError('توزيع رول على الجميع متاح لمالك السيرفر فقط.', 403);
+      if (actor !== guild.ownerId) throw new RuleError('التوزيع الجماعي متاح لمالك السيرفر فقط.', 403);
     }
     checkOwner();
+    if (audience !== 'members' && audience !== 'bots') throw new RuleError('نطاق توزيع الرول غير صالح.');
     if (active) throw new RuleError('يوجد توزيع رول قيد التنفيذ. انتظر النتيجة قبل إعادة الأمر.', 409);
     active = true;
     try {
@@ -53,7 +54,7 @@ function createBulkRole({ readyGuild, reservedRole = () => false, now = Date.now
       const { fingerprint, impact } = await checkRole();
       if (confirmation !== undefined) {
         if (!pending || pending.expires <= now() || pending.token !== confirmation || pending.actor !== actor ||
-            pending.guildId !== id || pending.channel !== channel || pending.roleId !== roleId) {
+            pending.guildId !== id || pending.channel !== channel || pending.roleId !== roleId || pending.audience !== audience) {
           throw new RuleError('تأكيد غير صالح أو منتهي. اكتب أمر التوزيع بدون تأكيد للحصول على رمز جديد في نفس الروم.', 400);
         }
         const saved = pending;
@@ -63,7 +64,7 @@ function createBulkRole({ readyGuild, reservedRole = () => false, now = Date.now
         }
       } else if (impact.guildPermissions || impact.rooms || impact.policyRole) {
         const token = randomBytes(6).toString('hex');
-        pending = { token, actor, guildId:id, channel, roleId, fingerprint, expires:now() + confirmationLifetime };
+        pending = { token, actor, guildId:id, channel, roleId, audience, fingerprint, expires:now() + confirmationLifetime };
         return { token, impact };
       }
       const queue = [];
@@ -84,15 +85,16 @@ function createBulkRole({ readyGuild, reservedRole = () => false, now = Date.now
           const memberId = member.user.id;
           if (BigInt(memberId) <= BigInt(after)) continue;
           if (BigInt(memberId) > BigInt(cursor)) cursor = memberId;
-          if (member.user.bot || member.pending) result.skipped++;
+          const inAudience = Boolean(member.user.bot) === (audience === 'bots');
+          if (!inAudience || memberId === user.id || member.pending) result.skipped++;
           else if (member.roles.includes(roleId)) result.already++;
           else queue.push(memberId);
         }
         if (page.length < pageSize) break;
-        if (cursor === after) throw new RuleError('تعذّر إكمال قائمة الأعضاء. لم يُضف الرول لأي عضو.', 502);
+        if (cursor === after) throw new RuleError('تعذّر إكمال قائمة الأعضاء. لم يُضف الرول لأي حساب.', 502);
         after = cursor;
       }
-      const reason = 'BlueLand bulk role · ' + actor + ' · ' + delivery;
+      const reason = 'BlueLand bulk role · ' + actor + ' · ' + delivery + ' · ' + audience;
       for (const [index, memberId] of queue.entries()) {
         if (index % 50 === 0) {
           try {

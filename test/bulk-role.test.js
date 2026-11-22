@@ -50,13 +50,48 @@ function harness(rows) {
 
 const request = {actor:owner,roleId,delivery:'discord:bulk-test'};
 
-test('bulk role syntax accepts a role mention or ID without changing plain +ر',()=>{
+test('bulk role syntax accepts a role mention or ID for either audience without changing plain +ر',()=>{
   assert.deepEqual(parseChat('+ر'),{action:'roles'});
-  assert.deepEqual(parseChat('+ر الجميع '+roleId),{action:'bulk-role',roleId});
-  assert.deepEqual(parseChat('+ر الجميع <@&'+roleId+'>'),{action:'bulk-role',roleId});
-  for (const extra of ['', '<@'+roleId+'>', '@everyone', roleId+' 2', roleId.slice(0,16)]) {
-    assert.throws(()=>parseChat('+ر الجميع '+extra),/منشن رول واحد/);
+  for (const [group,audience] of [['الجميع','members'],['البوتات','bots']]) {
+    assert.deepEqual(parseChat('+ر '+group+' '+roleId),{action:'bulk-role',roleId,audience});
+    assert.deepEqual(parseChat('+ر '+group+' <@&'+roleId+'>'),{action:'bulk-role',roleId,audience});
+    for (const extra of ['', '<@'+roleId+'>', '@everyone', roleId+' 2', roleId.slice(0,16)]) {
+      assert.throws(()=>parseChat('+ر '+group+' '+extra),/منشن رول واحد/);
+    }
   }
+});
+
+test('the bot command targets only other bots and its confirmation cannot authorize human distribution',async()=>{
+  const caller=member(botId,{bot:true,roles:[botRole]});
+  const human=member(user(1));
+  const bot=member(user(2),{bot:true});
+  const already=member(user(3),{bot:true,roles:[roleId]});
+  const pending=member(user(4),{bot:true,pending:true});
+  const h=harness([caller,human,bot,already,pending]);
+  h.roles.at(-1).permissions=String(P.ViewChannel);
+  const store={community:{}};
+  const run=commandRunner({store,bulkRole:h.run});
+  const handle=createMessageHandler({store,run,parse:parseChat});
+  const replies=[];
+  const message={author:{id:owner,bot:false},id:'200000000000000007',guildId:id,channelId:user(10),inGuild:()=>true,
+    content:'+ر البوتات '+roleId,reply:async data=>replies.push(data.content)};
+  await handle(message);
+  assert.equal(h.writes.length,0);
+  assert.match(replies[0],/الطرف الثالث/);
+  const command=replies[0].match(/`(\+ر البوتات [^`]+)`/)[1];
+  assert.equal(parseChat(command).audience,'bots');
+  const confirm={...message,id:'200000000000000008',content:command};
+  await handle({...confirm,content:command.replace('+ر البوتات ','+ر الجميع ')});
+  assert.match(replies.at(-1),/تأكيد غير صالح/);
+  assert.equal(h.writes.length,0);
+  await handle(confirm);
+  assert.deepEqual(h.writes.map(([route])=>route),[Routes.guildMemberRole(id,bot.user.id,roleId)]);
+  assert.deepEqual(human.roles,[]);
+  assert.deepEqual(caller.roles,[botRole]);
+  assert.deepEqual(pending.roles,[]);
+  assert.match(replies.at(-1),/تمت الإضافة وتحققت منها: \*\*1\*\*/);
+  assert.match(replies.at(-1),/عندهم الرول مسبقًا: \*\*1\*\*/);
+  assert.match(replies.at(-1),/الانضمام\): \*\*3\*\*/);
 });
 
 test('the Discord handler delegates the bulk role, reads all pages, verifies writes and skips existing/bot/pending members',async()=>{

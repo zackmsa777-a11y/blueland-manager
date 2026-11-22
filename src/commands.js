@@ -67,18 +67,18 @@ const helpText=[
   'الإشراف بالعربي · /تحذير، /سحب-تحذير، /تحذيرات، /تايم، /فك-تايم، /ميوت، /فك-ميوت، /قفل، /فتح، /طرد، /بان، /فك-بان',
   'الطلبات والألعاب بالعربي · /طلب تقديم، /طلب حالة، /تذكرة فتح، /ألعاب روليت، /ألعاب كراسي، /ألعاب مافيا، /ألعاب حجر-ورقة-مقص، /ألعاب حقيبة، /ألعاب متجر',
   'اختصارات الشات · +ر للرولات، +بان @العضو السبب، +فك-بان معرّف_العضو',
-  'مالك السيرفر · +ر الجميع @الرول أو +ر الجميع معرّف_الرول. للرولات الحساسة يرسل البوت أمر تأكيد.',
+  'مالك السيرفر · +ر الجميع @الرول للأعضاء أو +ر البوتات @الرول للبوتات. يقبل معرّف الرول أيضًا، ويطلب تأكيدًا للرولات الحساسة.',
   'السيرفر · /roles، /server، /ping، /rank، /top'
 ].join('\n');
 function parseChat(text) {
   if (!text.startsWith('+')) return null;
   const [first,...parts]=text.slice(1).trim().split(/\s+/u);
-  if (first==='ر' && parts[0]==='الجميع') {
-    const token=parts[1] ?? '';
+  if (first==='ر' && ['الجميع','البوتات'].includes(parts[0])) {
+    const [group,token='']=parts;
     const match=/^<@&(\d{17,20})>$/.exec(token) || /^(\d{17,20})$/.exec(token);
     const confirming=parts.length===4 && parts[2]==='تأكيد' && /^[0-9a-f]{12}$/.test(parts[3]);
-    if (!match || (parts.length!==2 && !confirming)) throw new RuleError('اكتب +ر الجميع وبعدها منشن رول واحد أو معرّف الرول. للتأكيد استخدم الأمر الذي يرسله البوت.');
-    return {action:'bulk-role',roleId:match[1],...(confirming?{confirmation:parts[3]}:{})};
+    if (!match || (parts.length!==2 && !confirming)) throw new RuleError('اكتب +ر '+group+' وبعدها منشن رول واحد أو معرّف الرول. للتأكيد استخدم الأمر الذي يرسله البوت.');
+    return {action:'bulk-role',roleId:match[1],audience:group==='البوتات'?'bots':'members',...(confirming?{confirmation:parts[3]}:{})};
   }
   const action=Object.hasOwn(chatAliases,first) ? chatAliases[first] : Object.values(chatAliases).includes(first) ? first : null;
   if (!action) return null;
@@ -101,26 +101,31 @@ function commandRunner({store,community,promotions,readyGuild,pair,bulkRole}) {
   return async function run(input) {
     const {action,actor,delivery,channel}=input;
     if (action==='bulk-role') {
-      const result=await bulkRole({actor,delivery,channel,roleId:input.roleId,confirmation:input.confirmation});
+      const audience=input.audience ?? 'members';
+      const bots=audience==='bots';
+      const group=bots?'البوتات':'الجميع';
+      const result=await bulkRole({actor,delivery,channel,audience,roleId:input.roleId,confirmation:input.confirmation});
       if (result.token) {
         const {administrator,guildPermissions,rooms,policyRole}=result.impact;
         const warnings=[];
-        if (administrator) warnings.push('**Administrator:** يمنح الأعضاء تحكّمًا إداريًا ويتجاوز قيود الرومات.');
-        else if (guildPermissions) warnings.push('الرول يمنح صلاحيات عامة في السيرفر لكل عضو يحصل عليه.');
+        if (bots) warnings.push('أي صلاحيات إضافية تُمنح لحسابات البوت نفسها، بما فيها بوتات الطرف الثالث.');
+        if (administrator) warnings.push('**Administrator:** يمنح '+(bots?'البوتات':'الأعضاء')+' تحكّمًا إداريًا ويتجاوز قيود الرومات.');
+        else if (guildPermissions) warnings.push('الرول يمنح صلاحيات عامة في السيرفر لكل حساب يحصل عليه.');
         if (rooms) warnings.push('الرول يغيّر أذونات **'+rooms+'** روم أو فئة، وقد يفتح رومات خاصة أو يقيّد الوصول.');
         if (policyRole) warnings.push('هذا رول من السلّم أو من رولات التفويض أو الدعم؛ توزيعه قد يمنح صلاحيات طاقم أو يسبب تعارض رتب.');
-        return ['معاينة توزيع <@&'+input.roleId+'> على جميع الأعضاء المؤهلين. **لم يُضف الرول بعد.**',...warnings,
-          'للتأكيد من مالك السيرفر في نفس الروم خلال دقيقتين: `+ر الجميع '+input.roleId+' تأكيد '+result.token+'`'].join('\n');
+        const targets=bots?'البوتات الأخرى فقط':'جميع الأعضاء المؤهلين';
+        return ['معاينة توزيع <@&'+input.roleId+'> على '+targets+'. **لم يُضف الرول بعد.**',...warnings,
+          'للتأكيد من مالك السيرفر في نفس الروم خلال دقيقتين: `+ر '+group+' '+input.roleId+' تأكيد '+result.token+'`'].join('\n');
       }
       const summary=[
-        'نتيجة توزيع <@&'+input.roleId+'>:',
+        'نتيجة توزيع <@&'+input.roleId+'>'+(bots?' على البوتات:':':'),
         'تمت الإضافة وتحققت منها: **'+result.added+'**',
         'عندهم الرول مسبقًا: **'+result.already+'**',
-        'تم تخطيهم (بوتات أو أعضاء لم يكملوا الانضمام): **'+result.skipped+'**'
+        (bots?'تم تخطيهم (حسابات بشرية أو BlueLand Manager أو حسابات لم تكمل الانضمام): ':'تم تخطيهم (بوتات أو أعضاء لم يكملوا الانضمام): ')+'**'+result.skipped+'**'
       ];
       if (result.failed) summary.push('تعذّرت الإضافة: **'+result.failed+'**');
       if (result.unverified) summary.push('تعذّر التحقق من الإضافة: **'+result.unverified+'**');
-      if (result.remaining) summary.push('توقف التوزيع بعد تعذّر إعادة التحقق من الصلاحيات. لم تتم المحاولة لـ **'+result.remaining+'** عضو.');
+      if (result.remaining) summary.push('توقف التوزيع بعد تعذّر إعادة التحقق من الصلاحيات. لم تتم المحاولة لـ **'+result.remaining+'** '+(bots?'بوت.':'عضو.'));
       return summary.join('\n');
     }
     if (action==='ping') return 'BlueLand Manager متصل. زمن استجابة ديسكورد '+Math.max(0,Math.round(readyGuild().client.ws.ping))+' ms.';
