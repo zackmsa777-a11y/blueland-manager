@@ -67,7 +67,7 @@ const helpText=[
   'الإشراف بالعربي · /تحذير، /سحب-تحذير، /تحذيرات، /تايم، /فك-تايم، /ميوت، /فك-ميوت، /قفل، /فتح، /طرد، /بان، /فك-بان',
   'الطلبات والألعاب بالعربي · /طلب تقديم، /طلب حالة، /تذكرة فتح، /ألعاب روليت، /ألعاب كراسي، /ألعاب مافيا، /ألعاب حجر-ورقة-مقص، /ألعاب حقيبة، /ألعاب متجر',
   'اختصارات الشات · +ر للرولات، +بان @العضو السبب، +فك-بان معرّف_العضو',
-  'مالك السيرفر · +ر الجميع @الرول أو +ر الجميع معرّف_الرول لتوزيع رول عادي على الأعضاء.',
+  'مالك السيرفر · +ر الجميع @الرول أو +ر الجميع معرّف_الرول. للرولات الحساسة يرسل البوت أمر تأكيد.',
   'السيرفر · /roles، /server، /ping، /rank، /top'
 ].join('\n');
 function parseChat(text) {
@@ -76,8 +76,9 @@ function parseChat(text) {
   if (first==='ر' && parts[0]==='الجميع') {
     const token=parts[1] ?? '';
     const match=/^<@&(\d{17,20})>$/.exec(token) || /^(\d{17,20})$/.exec(token);
-    if (parts.length!==2 || !match) throw new RuleError('اكتب +ر الجميع وبعدها منشن رول واحد أو معرّف الرول.');
-    return {action:'bulk-role',roleId:match[1]};
+    const confirming=parts.length===4 && parts[2]==='تأكيد' && /^[0-9a-f]{12}$/.test(parts[3]);
+    if (!match || (parts.length!==2 && !confirming)) throw new RuleError('اكتب +ر الجميع وبعدها منشن رول واحد أو معرّف الرول. للتأكيد استخدم الأمر الذي يرسله البوت.');
+    return {action:'bulk-role',roleId:match[1],...(confirming?{confirmation:parts[3]}:{})};
   }
   const action=Object.hasOwn(chatAliases,first) ? chatAliases[first] : Object.values(chatAliases).includes(first) ? first : null;
   if (!action) return null;
@@ -100,7 +101,17 @@ function commandRunner({store,community,promotions,readyGuild,pair,bulkRole}) {
   return async function run(input) {
     const {action,actor,delivery,channel}=input;
     if (action==='bulk-role') {
-      const result=await bulkRole({actor,delivery,roleId:input.roleId});
+      const result=await bulkRole({actor,delivery,channel,roleId:input.roleId,confirmation:input.confirmation});
+      if (result.token) {
+        const {administrator,guildPermissions,rooms,policyRole}=result.impact;
+        const warnings=[];
+        if (administrator) warnings.push('**Administrator:** يمنح الأعضاء تحكّمًا إداريًا ويتجاوز قيود الرومات.');
+        else if (guildPermissions) warnings.push('الرول يمنح صلاحيات عامة في السيرفر لكل عضو يحصل عليه.');
+        if (rooms) warnings.push('الرول يغيّر أذونات **'+rooms+'** روم أو فئة، وقد يفتح رومات خاصة أو يقيّد الوصول.');
+        if (policyRole) warnings.push('هذا رول من السلّم أو من رولات التفويض أو الدعم؛ توزيعه قد يمنح صلاحيات طاقم أو يسبب تعارض رتب.');
+        return ['معاينة توزيع <@&'+input.roleId+'> على جميع الأعضاء المؤهلين. **لم يُضف الرول بعد.**',...warnings,
+          'للتأكيد من مالك السيرفر في نفس الروم خلال دقيقتين: `+ر الجميع '+input.roleId+' تأكيد '+result.token+'`'].join('\n');
+      }
       const summary=[
         'نتيجة توزيع <@&'+input.roleId+'>:',
         'تمت الإضافة وتحققت منها: **'+result.added+'**',

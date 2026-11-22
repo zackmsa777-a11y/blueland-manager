@@ -80,28 +80,79 @@ test('the Discord handler delegates the bulk role, reads all pages, verifies wri
   assert.deepEqual(replies[0].allowedMentions,{parse:[],repliedUser:false});
 });
 
-test('bulk role refuses non-owners, privileged or protected roles and roles above the bot before writing',async()=>{
+test('bulk role keeps Discord role restrictions and refuses non-owners before writing',async()=>{
   const h = harness([member(user(1))]);
   await assert.rejects(h.run({...request,actor:user(1)}),/لمالك السيرفر فقط/);
   assert.equal(h.reads.length,0);
-  await assert.rejects(h.run({...request,roleId:id}),/رولات السلّم/);
-  await assert.rejects(h.run({...request,roleId:catalog.categories[0].helpers[0]}),/رولات السلّم/);
-  const reserved = createBulkRole({readyGuild:()=>h.guild,reservedRole:role=>role===roleId});
-  await assert.rejects(reserved(request),/رولات السلّم/);
+  await assert.rejects(h.run({...request,roleId:id}),/@everyone/);
   await assert.rejects(h.run({...request,roleId:user(2)}),/غير موجود/);
   const role=h.roles.at(-1);
-  role.permissions=String(P.Administrator);
-  await assert.rejects(h.run(request),/بدون صلاحيات/);
-  role.permissions='0'; role.managed=true;
-  await assert.rejects(h.run(request),/بدون صلاحيات/);
-  role.managed=false;
-  h.channels.push({permission_overwrites:[{id:roleId,allow:String(P.ViewChannel),deny:'0'}]});
-  await assert.rejects(h.run(request),/أذونات خاصة/);
-  h.channels[0].permission_overwrites[0].allow='0';
-  h.channels[0].permission_overwrites[0].deny=String(P.SendMessages);
-  await assert.rejects(h.run(request),/أذونات خاصة/);
-  h.channels.length=0; role.position=3;
+  role.managed=true;
+  await assert.rejects(h.run(request),/لا يمكن منحه يدويًا/);
+  role.managed=false; role.position=3;
   await assert.rejects(h.run(request),/رولًا أعلى/);
+  role.position=1; h.roles[1].permissions='0';
+  await assert.rejects(h.run(request),/Manage Roles/);
+  assert.equal(h.writes.length,0);
+});
+
+test('the owner can preview and confirm an administrative role using the returned chat command',async()=>{
+  const h=harness([member(user(1))]);
+  h.roles.at(-1).permissions=String(P.Administrator);
+  h.roles[1].permissions=String(P.ManageRoles | P.Administrator);
+  const store={community:{}};
+  const run=commandRunner({store,bulkRole:h.run});
+  const onMessage=createMessageHandler({store,run,parse:parseChat});
+  const replies=[];
+  const message={author:{id:owner,bot:false},id:'200000000000000005',guildId:id,channelId:user(10),inGuild:()=>true,
+    content:'+ر الجميع <@&'+roleId+'>',reply:async data=>replies.push(data.content)};
+  await onMessage(message);
+  assert.equal(h.writes.length,0);
+  assert.match(replies[0],/Administrator/);
+  const command=replies[0].match(/`(\+ر الجميع [^`]+)`/)[1];
+  assert.equal(parseChat(command).roleId,roleId);
+  assert.match(parseChat(command).confirmation,/^[a-f0-9]{12}$/);
+  const confirm={...message,id:'200000000000000006',content:command};
+  await onMessage({...confirm,channelId:user(11)});
+  assert.match(replies.at(-1),/تأكيد غير صالح/);
+  assert.equal(h.writes.length,0);
+  await onMessage(confirm);
+  assert.match(replies.at(-1),/تمت الإضافة وتحققت منها: \*\*1\*\*/);
+  assert.equal(h.writes[0][0],Routes.guildMemberRole(id,user(1),roleId));
+  await onMessage(confirm);
+  assert.match(replies.at(-1),/تأكيد غير صالح/);
+  assert.equal(h.writes.length,1);
+});
+
+test('channel permission changes or expired confirmation require a new preview',async()=>{
+  const h=harness([member(user(1))]);
+  let time=1000;
+  const run=createBulkRole({readyGuild:()=>h.guild,now:()=>time});
+  const room={id:user(10),permission_overwrites:[{id:roleId,allow:String(P.ViewChannel),deny:'0'}]};
+  h.channels.push(room);
+  const first=await run(request);
+  assert.deepEqual(first.impact,{administrator:false,guildPermissions:false,rooms:1,policyRole:false});
+  room.permission_overwrites[0].allow='0';
+  room.permission_overwrites[0].deny=String(P.SendMessages);
+  await assert.rejects(run({...request,confirmation:first.token}),/تغيّرت إعدادات الرول/);
+  const second=await run(request);
+  time+=120_000;
+  await assert.rejects(run({...request,confirmation:second.token}),/تأكيد غير صالح/);
+  assert.equal(h.writes.length,0);
+  const third=await run(request);
+  assert.equal((await run({...request,confirmation:third.token})).added,1);
+});
+
+test('ranks and delegation roles without native permission bits still ask for confirmation',async()=>{
+  const h=harness([member(user(1))]);
+  const ladderRole=catalog.categories[0].helpers[0];
+  h.roles.push({id:ladderRole,position:1,permissions:'0',managed:false});
+  const run=createBulkRole({readyGuild:()=>h.guild,reservedRole:role=>role===roleId});
+  for (const id of [roleId,ladderRole]) {
+    const preview=await run({...request,roleId:id});
+    assert.equal(preview.impact.policyRole,true);
+    assert.match(preview.token,/^[a-f0-9]{12}$/);
+  }
   assert.equal(h.writes.length,0);
 });
 
