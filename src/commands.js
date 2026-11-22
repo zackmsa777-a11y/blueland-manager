@@ -38,13 +38,14 @@ const commands=[
   cmd('top','اعرض الأعضاء الأكثر نشاطًا')
 ];
 const chatAliases={
-  'بنق':'ping','مساعدة':'help','اوامر':'help','أوامر':'help','رولات':'roles','سيرفر':'server','مستوى':'rank','توب':'top',
+  'تخفيض':'demote','بنق':'ping','مساعدة':'help','اوامر':'help','أوامر':'help','رولات':'roles','سيرفر':'server','مستوى':'rank','توب':'top',
   'تحذير':'warn','سحب-تحذير':'unwarn','تحذيرات':'warnings','تايم':'timeout','فك-تايم':'untimeout',
   'ميوت':'mute','فك-ميوت':'unmute','قفل':'lock','فتح':'unlock','طرد':'kick','حظر':'ban','فك-حظر':'unban'
 };
 const helpText=[
   '**أوامر BlueLand Empire**',
-  'الطاقم · +ترقية @العضو، /promote، /dashboard',
+  'الطاقم · +ترقية @العضو، +تخفيض @العضو، /promote، /dashboard',
+  'Codex · للمسؤولين: منشن البوت أو رد على رسالته. +model يعرض الموديل ودرجة التفكير.',
   'الإشراف · /warn، /warnings، /unwarn، /mute، /unmute، /timeout، /untimeout، /lock، /unlock، /kick، /ban، /unban',
   'الطلبات · /request submit للتقديم، /request status لمتابعة القرار',
   'الدعم · /ticket create لفتح تذكرة خاصة ثم claim أو close من داخلها',
@@ -55,6 +56,7 @@ function parseChat(text) {
   const [first,...parts]=text.slice(1).trim().split(/\s+/u);
   const action=chatAliases[first] || (Object.values(chatAliases).includes(first)?first:null);
   if (!action) return null;
+  if (action === 'demote' && (parts.length !== 1 || !/^<@!?\d{17,20}>$/.test(parts[0]))) throw new RuleError('اكتب +تخفيض مع منشن عضو واحد.');
   if (['ping','help','server','roles','top'].includes(action)) return {action};
   if (['lock','unlock'].includes(action)) return {action,reason:parts.join(' ')};
   if (action==='rank' && !parts.length) return {action};
@@ -77,9 +79,9 @@ function commandRunner({store,community,promotions,readyGuild,pair}) {
     if (action==='server') { const g=readyGuild(); return g.name+' · '+g.memberCount+' أعضاء · '+g.roles.cache.size+' رول.'; }
     if (action==='roles') return readyGuild().roles.cache.size+' رول في BlueLand، منها '+catalog.categories.reduce((sum,c)=>sum+c.ranks.length,0)+' درجة. الفئات بالترتيب:\n'+catalog.categories.map(c=>c.name).join(' ← ');
     if (action==='dashboard') return pair(actor);
-    if (action==='promote') {
-      const entry=await promotions.execute({id:delivery,actor,target:input.target,source:'discord'});
-      return 'تمت ترقية <@'+input.target+'> إلى **'+roles.get(entry.plan.to).label+'**.';
+    if (action==='promote' || action==='demote') {
+      const entry=await promotions.execute({id:delivery,actor,target:input.target,source:'discord',direction:action});
+      return (action==='demote'?'تم تخفيض':'تمت ترقية')+' <@'+input.target+'> إلى **'+roles.get(entry.plan.to).label+'**.';
     }
     if (action==='rank' || action==='top') {
       if (!db.settings().levels) throw new RuleError('نظام المستويات متوقف. يمكن لإدارة السيرفر تفعيله من لوحة الطاقم.');

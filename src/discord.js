@@ -3,7 +3,8 @@
 const { catalog, RuleError } = require('./ladder');
 const { createMessageHandler } = require('./chat');
 const { liveDirectory } = require('./directory');
-const { makeService } = require('./promotions');
+const { makeService, memberAccess } = require('./promotions');
+const { createCodexHandler } = require('./codex-chat');
 const { createCommunity } = require('./community');
 const { communityGateway } = require('./discord-community');
 const { commandRunner, parseChat, registerCommands, interactionInput, commands } = require('./commands');
@@ -68,7 +69,12 @@ function connectDiscord(store, env) {
     return 'رمز دخول لوحة BlueLand، صالح لخمس دقائق:\n'+code+(env.PUBLIC_ORIGIN?'\n'+env.PUBLIC_ORIGIN:'');
   }
   const run=commandRunner({store,community,promotions:service,readyGuild,pair});
-  const onMessage=createMessageHandler({authorize:community.dashboard,service,store,publicOrigin:env.PUBLIC_ORIGIN,run,parse:parseChat});
+  async function isAdmin(actor) {
+    const ctx=await context(actor);
+    return !ctx.actor.bot && (actor===ctx.ownerId || memberAccess(ctx,ctx.actor).admin);
+  }
+  const codex=createCodexHandler({store:store.codex,isAdmin,run});
+  const onMessage=createMessageHandler({authorize:community.dashboard,service,store,publicOrigin:env.PUBLIC_ORIGIN,run,parse:parseChat,codex});
   let syncing=false;
   async function sync() {
     if (syncing || connection.slashReady===commands.length) return;
@@ -88,7 +94,7 @@ function connectDiscord(store, env) {
       const app=await rest.get(api.Routes.oauth2CurrentApplication());
       if (app.id!==botId) throw new RuleError('التوكن يخص تطبيق ديسكورد مختلفًا.');
       const flags=BigInt(app.flags || 0);
-      const intents=[api.GatewayIntentBits.Guilds,api.GatewayIntentBits.GuildMessages,api.GatewayIntentBits.DirectMessages];
+      const intents=[api.GatewayIntentBits.Guilds,api.GatewayIntentBits.GuildMessages,api.GatewayIntentBits.DirectMessages,api.GatewayIntentBits.GuildVoiceStates];
       const contentEnabled=Boolean(flags & ((1n<<18n)|(1n<<19n)));
       const membersEnabled=Boolean(flags & ((1n<<14n)|(1n<<15n)));
       if (contentEnabled) intents.push(api.GatewayIntentBits.MessageContent);

@@ -2,7 +2,7 @@
 
 const { catalog, roles, RuleError, parsePromotion } = require('./ladder');
 
-function createMessageHandler({ authorize, service, store, publicOrigin, run, parse }) {
+function createMessageHandler({ authorize, service, store, publicOrigin, run, parse, codex }) {
   return async function onMessage(message) {
     if (message.author.bot || message.webhookId) return;
     const inGuild=message.inGuild();
@@ -14,6 +14,7 @@ function createMessageHandler({ authorize, service, store, publicOrigin, run, pa
         if (run && ['+بنق','+ping','+مساعدة','+help'].includes(text)) await reply(await run({action:parse(text).action,actor:message.author.id}));
         return;
       }
+      if (codex && await codex(message)) return;
       if (!text.startsWith('+')) {
         if (text && store.community?.settings().levels) store.community.addXp(message.author.id,message.createdTimestamp);
         return;

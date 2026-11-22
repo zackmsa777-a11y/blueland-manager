@@ -23,6 +23,9 @@ function checkOperator(ctx, allowed) {
 
 function checkPlan(ctx, plan, allowed) {
   const operator = checkOperator(ctx, allowed);
+  if (plan.direction === 'demote' && ctx.actor.id !== ctx.ownerId && !operator.admin) {
+    throw new RuleError('التخفيض يحتاج صلاحية Administrator.',403);
+  }
   if (ctx.actor.id === ctx.target.id || ctx.target.id === ctx.ownerId || ctx.target.bot) {
     throw new RuleError('اختر عضوًا آخر من السيرفر. الترقية لا تشمل مالك السيرفر أو البوتات.', 403);
   }
@@ -101,7 +104,8 @@ function makeService(store, gateway, allowed = new Set()) {
 
   async function perform(request) {
     let entry = store.byId(request.id);
-    if (entry && (entry.actor !== request.actor || entry.target !== request.target)) {
+    if (entry && (entry.actor !== request.actor || entry.target !== request.target ||
+        (request.direction && request.direction !== (entry.plan.direction || 'promote')))) {
       throw new RuleError('معرّف العملية مستخدم لطلب آخر.', 409);
     }
     if (entry?.state === 'done') return entry;
@@ -109,7 +113,7 @@ function makeService(store, gateway, allowed = new Set()) {
     checkOperator(ctx, allowed);
     if (!entry) {
       if (store.pending(request.target)) throw new RuleError('توجد ترقية سابقة قيد الاستكمال لهذا العضو.', 409);
-      const plan = planPromotion(ctx.target.roles);
+      const plan = planPromotion(ctx.target.roles, request.direction);
       if (Object.hasOwn(request, 'expectedFrom') && plan.from !== request.expectedFrom) {
         throw new RuleError('تغيّرت درجة العضو بعد المعاينة. اعرض الترقية من جديد.', 409);
       }

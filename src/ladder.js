@@ -35,7 +35,7 @@ function compareRoles(a, b) {
   return BigInt(a.id) < BigInt(b.id) ? -1 : 1;
 }
 
-function planPromotion(roleIds) {
+function planPromotion(roleIds, direction = 'promote') {
   const held = new Set(roleIds);
   const currentRanks = ladder.filter(step => held.has(step.id) || (step.id === step.group.base && held.has(step.group.variant)));
   const previous = currentRanks.at(-1);
@@ -43,7 +43,9 @@ function planPromotion(roleIds) {
   if (details.length > 1 || (details.length && previous !== details[0])) {
     throw new RuleError('العضو يحمل درجات متعارضة. راجع رتبته الحالية في ديسكورد قبل الترقية.');
   }
-  const next = ladder[(previous?.index ?? -1) + 1];
+  const down = direction === 'demote';
+  if (down && (!previous || previous.index === 0)) throw new RuleError('لا توجد درجة أدنى لهذا العضو في السلّم.');
+  const next = ladder[(previous?.index ?? -1) + (down ? -1 : 1)];
   if (!next) throw new RuleError('وصل العضو إلى آخر درجة في سلّم الترقيات.');
   const variant = previous && held.has(previous.group.variant);
   const anchor = variant ? next.group.variant : next.group.base;
@@ -51,8 +53,8 @@ function planPromotion(roleIds) {
   if (next.id !== next.group.base) assigned.add(next.id);
   const add = [...assigned].filter(id => !held.has(id));
   // Only known ladder roles are replaced. Permissions accumulate; unrelated roles stay intact.
-  const remove = [...held].filter(id => allRankIds.has(id) && !assigned.has(id));
-  return { from: previous?.id ?? null, to: next.id, group: next.group.id, anchor, add, remove, helpers: next.helpers };
+  const remove = [...held].filter(id => !assigned.has(id) && (allRankIds.has(id) || (down && previous.helpers.includes(id))));
+  return { from: previous?.id ?? null, to: next.id, group: next.group.id, anchor, add, remove, helpers: next.helpers, ...(down ? { direction } : {}) };
 }
 
 function parsePromotion(content) {
