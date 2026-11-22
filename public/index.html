@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0a1424">
+  <title>الترقيات | BlueLand Empire</title>
+  <link rel="icon" href="/assets/blueland.png">
+  <link rel="preload" href="/assets/plex-ar-500.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/staff.js" defer></script>
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#workspace">انتقل إلى المحتوى</a>
+  <header class="topbar">
+    <div class="top-inner">
+      <a class="brand" href="#ladder" aria-label="BlueLand Empire، سلّم الترقيات">
+        <img src="/assets/blueland.png" width="44" height="44" alt="">
+        <span dir="ltr">BlueLand <strong>Empire</strong></span>
+      </a>
+      <nav aria-label="أقسام اللوحة" class="top-nav">
+        <a href="#ladder" data-view="ladder" aria-current="page"><i data-icon="git-branch"></i>الترقيات</a>
+        <a href="#directory" data-view="directory"><i data-icon="layers-3"></i>رولات السيرفر</a>
+        <a href="#history" data-view="history"><i data-icon="history"></i>سجل الترقيات</a>
+        <a href="#staff" data-view="staff"><i data-icon="shield-check"></i>مكتب الطاقم</a>
+      </nav>
+      <div class="account">
+        <button id="connection" class="connection" type="button"><span class="status-dot"></span><span id="connection-label">حالة الاتصال</span></button>
+        <button id="account-button" class="button quiet" type="button"><i data-icon="log-in"></i><span>دخول الإدارة</span></button>
+      </div>
+    </div>
+  </header>
+  <main class="frame" id="workspace" tabindex="-1">
+    <section class="masthead" aria-labelledby="heading">
+      <div class="mast-art" aria-hidden="true"><img src="/assets/blueland.png" alt=""></div>
+      <div class="mast-copy">
+        <h1 id="heading">إدارة الترقيات</h1>
+        <p id="intro">درجات الطاقم وصلاحيات كل فئة في سيرفر <bdi>BlueLand Empire</bdi>.</p>
+        <div class="mast-actions">
+          <button class="button primary" id="open-simulator" type="button"><i data-icon="chevrons-up"></i>معاينة ترقية</button>
+          <button class="command" id="copy-command" type="button" aria-label="نسخ أمر الترقية"><span class="command-text" dir="ltr"><span>+<bdi dir="rtl">ترقية</bdi></span> <span>@<bdi dir="rtl">العضو</bdi></span></span><i data-icon="copy"></i></button>
+        </div>
+      </div>
+    </section>
+    <div id="content" aria-busy="true"><p class="loading">جارٍ تحميل رولات السيرفر…</p></div>
+  </main>
+  <dialog id="dialog" aria-labelledby="dialog-title">
+    <div class="dialog-head"><h2 id="dialog-title"></h2><button id="close-dialog" class="icon-button" aria-label="إغلاق" type="button"><i data-icon="x"></i></button></div>
+    <div id="dialog-body"></div>
+  </dialog>
+  <div id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

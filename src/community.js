@@ -1,0 +1,213 @@
+'use strict';
+
+const {PermissionFlagsBits: P} = require('discord.js');
+const {catalog,roles,compareRoles,planPromotion,RuleError} = require('./ladder');
+const {memberAccess} = require('./promotions');
+
+const helper = Object.fromEntries(catalog.roles.filter(r=>r.kind==='permission').map(r=>[r.label,r.id]));
+const rules = {
+  warn:[P.ModerateMembers,helper['#warn/unwarn']], unwarn:[P.ModerateMembers,helper['#warn/unwarn']],
+  warnings:[P.ModerateMembers,helper['#warn/unwarn']], mute:[P.ManageRoles,helper['Mute/unmute']],
+  unmute:[P.ManageRoles,helper['Mute/unmute']], timeout:[P.ModerateMembers,helper['timeout/untimeout']],
+  untimeout:[P.ModerateMembers,helper['timeout/untimeout']], lock:[P.ManageChannels,helper['lock/unlock']],
+  unlock:[P.ManageChannels,helper['lock/unlock']], kick:[P.KickMembers], ban:[P.BanMembers], unban:[P.BanMembers]
+};
+const kinds = {promotion:'ترقية',application:'تقديم الطاقم',general:'طلب عام'};
+const requestStates = {pending:'بانتظار المراجعة',processing:'جارٍ تطبيق القرار',approved:'مقبول',rejected:'مرفوض',cancelled:'ألغاه صاحب الطلب'};
+function value(text,max=400) {
+  const cleaned=String(text ?? '').trim();
+  if (!cleaned || cleaned.length>max) throw new RuleError('أدخل نصًا من حرف واحد إلى '+max+' حرفًا.');
+  return cleaned;
+}
+function snowflake(id) {
+  if (!/^\d{17,20}$/.test(id || '')) throw new RuleError('معرّف ديسكورد غير صالح.');
+  return id;
+}
+function rowId(id) {
+  const n=Number(id);
+  if (!Number.isSafeInteger(n) || n<1) throw new RuleError('اكتب رقم السجل الصحيح.');
+  return n;
+}
+function permits(ctx, user, bit) {
+  return user.id===ctx.ownerId || (memberAccess(ctx,user).bits & (P.Administrator | bit))!==0n;
+}
+function verifyActor(ctx,bit,role) {
+  if (ctx.actor.bot || !(permits(ctx,ctx.actor,bit) || (role && ctx.actor.roles.includes(role)))) {
+    throw new RuleError('تحتاج صلاحية هذا الإجراء أو الرول المرتبط به في BlueLand.',403);
+  }
+}
+function verifyTarget(ctx) {
+  const {actor,target,bot}=ctx;
+  if (actor.id===target.id || target.id===ctx.ownerId || target.bot || permits(ctx,target,0n)) {
+    throw new RuleError('اختر عضوًا آخر تحت رتبتك؛ مالك السيرفر والإداريون والبوتات محميون.',403);
+  }
+  const highest=memberAccess(ctx,target).highest;
+  if (compareRoles(memberAccess(ctx,bot).highest,highest)>=0 ||
+      (actor.id!==ctx.ownerId && compareRoles(memberAccess(ctx,actor).highest,highest)>=0)) {
+    throw new RuleError('رول العضو أعلى من نطاق صلاحيات المسؤول أو البوت.',403);
+  }
+}
+
+function createCommunity(store, gateway, promotions) {
+  const db=store.community;
+  const running=new Map();
+  async function exclusive(key,work) {
+    if (running.has(key)) throw new RuleError('يجري تنفيذ إجراء على هذا السجل. حاول مجددًا بعد لحظة.',409);
+    running.set(key,true);
+    try { return await work(); } finally { running.delete(key); }
+  }
+  async function moderator(actor,action,target) {
+    if (!Object.hasOwn(rules,action)) throw new RuleError('أمر الإشراف غير معروف.');
+    const channelAction=action==='lock' || action==='unlock';
+    const ctx=await gateway.context(actor,channelAction || action==='unban' ? actor : snowflake(target));
+    verifyActor(ctx,...rules[action]);
+    if (!channelAction && !['unban','warnings'].includes(action)) verifyTarget(ctx);
+    return ctx;
+  }
+  async function moderate({delivery,actor,action,target,channel,reason,minutes,caseId,created=Date.now()}) {
+    snowflake(actor);
+    const roomAction=['lock','unlock','mute','unmute'].includes(action);
+    if (roomAction) snowflake(channel);
+    if (action==='lock' || action==='unlock') target=channel;
+    snowflake(target);
+    const why=value(reason || (['unmute','untimeout','unlock','warnings'].includes(action) ? 'بأمر المسؤول' : ''),350);
+    return exclusive('mod:'+target,async()=>{
+      const ctx=await moderator(actor,action,target);
+      if (action==='warnings') return db.cases(target).filter(row=>row.action==='warn' && !row.revoked);
+      const replay=db.fromEvent(delivery);
+      if (replay) return replay;
+      if (action==='unwarn') return db.revoke(delivery,actor,target,rowId(caseId),why);
+      if (action==='timeout' && (!Number.isInteger(minutes) || minutes<1 || minutes>40320)) throw new RuleError('مدة التايم أوت من دقيقة إلى ٢٨ يومًا.');
+      if (roomAction) {
+        await gateway.roomPermission({ctx,action,channel,target,db,reason:why});
+      } else if (action!=='warn') {
+        await gateway.memberAction({ctx,action,target,expiry:action==='timeout'?created+minutes*60000:null,reason:why});
+      }
+      return db.record(delivery,action,actor,target,why);
+    });
+  }
+  async function manager(actor) { const ctx=await gateway.context(actor); verifyActor(ctx,P.ManageGuild); return ctx; }
+  async function support(actor) {
+    const ctx=await gateway.context(actor);
+    verifyActor(ctx,P.ManageChannels,db.settings().supportRole);
+    return ctx;
+  }
+  async function reviewer(actor) { const ctx=await gateway.context(actor); promotions.checkOperator(ctx); return ctx; }
+  async function dashboard(actor) {
+    const ctx=await gateway.context(actor);
+    let review=true;
+    try { promotions.checkOperator(ctx); } catch(err) { if (!(err instanceof RuleError)) throw err; review=false; }
+    const config=permits(ctx,ctx.actor,P.ManageGuild);
+    const tickets=permits(ctx,ctx.actor,P.ManageChannels) || ctx.actor.roles.includes(db.settings().supportRole);
+    const cases=config || permits(ctx,ctx.actor,P.ModerateMembers) || ctx.actor.roles.includes(helper['#warn/unwarn']);
+    if (ctx.actor.bot || !(review || tickets || cases || config)) throw new RuleError('دخول الطاقم يحتاج إلى رول مخوّل في BlueLand.',403);
+    return {id:actor,name:ctx.actor.name,rights:{review,config,tickets,cases}};
+  }
+  async function submit({actor,kind,body,delivery}) {
+    if (!Object.hasOwn(kinds,kind)) throw new RuleError('اختر نوع طلب صالحًا.');
+    const ctx=await gateway.context(actor);
+    if (ctx.actor.bot) throw new RuleError('تقديم الطلبات مخصص لأعضاء السيرفر.',403);
+    const text=value(body,650);
+    let expected=null;
+    if (kind!=='general') {
+      const plan=planPromotion(ctx.actor.roles);
+      if (kind==='application' && plan.from) throw new RuleError('أنت ضمن الطاقم بالفعل. استخدم طلب ترقية.');
+      expected=plan.from;
+    }
+    return db.submit(delivery,actor,kind,text,expected);
+  }
+  async function applyRequest(row) {
+    try {
+      if (row.kind!=='general') await promotions.execute({id:'request:'+row.id,actor:row.reviewer,target:row.owner,source:'request',expectedFrom:catalog.roleAliases?.[row.expected] || row.expected});
+      db.finishReview(row.id,'approved');
+    } catch(err) {
+      if (!store.byId('request:'+row.id) && err instanceof RuleError && [400,403,404,409].includes(err.status)) db.finishReview(row.id,'pending');
+      throw err;
+    }
+    return db.request(row.id);
+  }
+  async function review(actor,id,decision,note) {
+    await reviewer(actor);
+    if (!['approve','reject'].includes(decision)) throw new RuleError('قرار المراجعة غير صالح.');
+    id=rowId(id);
+    return exclusive('request:'+id,async()=>{
+      const row=db.request(id);
+      if (!row) throw new RuleError('الطلب غير موجود.',404);
+      if (actor===row.owner) throw new RuleError('يجب أن يراجع طلبك مسؤول آخر.',403);
+      if (row.state!=='pending') throw new RuleError('هذا الطلب سبقت مراجعته. حدّث القائمة.',409);
+      const comment=String(note || '').trim();
+      if (comment.length>350 || (decision==='reject' && !comment)) throw new RuleError('اكتب سبب المراجعة، بحد أقصى ٣٥٠ حرفًا.');
+      if (!db.review(id,decision==='reject'?'rejected':'processing',actor,comment)) throw new RuleError('سبق لمسؤول آخر مراجعة الطلب.',409);
+      return decision==='reject' ? db.request(id) : applyRequest(db.request(id));
+    });
+  }
+  async function finishTicket(row) {
+    if (row.state==='opening') {
+      try {
+        const channel=await gateway.ticketRoom(row,db.settings());
+        db.setChannel(row.id,channel);
+      } catch(err) {
+        if (err instanceof RuleError && [400,403,404].includes(err.status)) db.releaseOpening(row.id);
+        throw err;
+      }
+    } else if (row.state==='closing' || row.state==='reopening') {
+      const closing=row.state==='closing';
+      try { await gateway.ticketWriting(row,!closing); }
+      catch(err) {
+        if (err instanceof RuleError && err.status===404) db.ticketRemoved(row.channel);
+        else if (err instanceof RuleError && err.status===403) db.ticketState(row.id,row.state,closing?'open':'closed');
+        throw err;
+      }
+      db.ticketState(row.id,row.state,closing?'closed':'open');
+    }
+    return db.ticket(row.id);
+  }
+  async function openTicket(actor,delivery,subject) {
+    const ctx=await gateway.context(actor);
+    if (ctx.actor.bot) throw new RuleError('فتح التذاكر مخصص للأعضاء.',403);
+    return exclusive('ticket:'+actor,async()=>{
+      const text=value(subject,200);
+      const previous=db.activeTicket(actor);
+      if (previous?.channel && gateway.ticketPresent && !await gateway.ticketPresent(previous.channel)) db.ticketRemoved(previous.channel);
+      return finishTicket(db.reserveTicket(delivery,actor,text));
+    });
+  }
+  async function ticketAction(actor,id,action) {
+    const row=db.ticket(rowId(id));
+    if (!row) throw new RuleError('التذكرة غير موجودة.',404);
+    if (action!=='close' || actor!==row.owner) await support(actor);
+    return exclusive('ticket:'+row.owner,async()=>{
+      const current=db.ticket(row.id);
+      if (!current.channel) throw new RuleError('روم هذه التذكرة غير متاح. افتح تذكرة جديدة.',409);
+      if (['claim','unclaim'].includes(action)) {
+        if (!db.claim(current.id,actor,action==='unclaim')) throw new RuleError('راجع حالة التذكرة والمسؤول المستلم لها.',409);
+      } else {
+        if (!['close','reopen'].includes(action)) throw new RuleError('إجراء التذكرة غير صالح.');
+        const close=action==='close';
+        if (!close && db.activeTicket(row.owner)) throw new RuleError('للعضو تذكرة أخرى مفتوحة.',409);
+        if (!db.ticketState(row.id,close?'open':'closed',close?'closing':'reopening')) throw new RuleError('حالة التذكرة تغيّرت. حدّث القائمة.',409);
+        return finishTicket(db.ticket(row.id));
+      }
+      return db.ticket(row.id);
+    });
+  }
+  async function saveSettings(actor,input) {
+    await manager(actor);
+    if (typeof input.levels!=='boolean') throw new RuleError('اختر حالة نظام المستويات.');
+    const settings={levels:input.levels};
+    for (const key of ['welcomeChannel','ticketCategory','supportRole']) settings[key]=input[key] ? snowflake(input[key]) : '';
+    await gateway.validateSettings(settings);
+    db.saveSettings(settings);
+    return settings;
+  }
+  async function recover() {
+    for (const row of db.processing()) {
+      try { await exclusive('request:'+row.id,()=>applyRequest(row)); } catch {}
+    }
+    for (const row of db.transitioningTickets()) {
+      try { await exclusive('ticket:'+row.owner,()=>finishTicket(row)); } catch {}
+    }
+  }
+  return {moderate,submit,review,openTicket,ticketAction,support,reviewer,dashboard,saveSettings,recover,manager};
+}
+module.exports={createCommunity, verifyTarget, kinds, requestStates, snowflake, rowId};
