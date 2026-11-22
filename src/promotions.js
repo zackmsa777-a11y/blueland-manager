@@ -21,9 +21,14 @@ function checkOperator(ctx, allowed) {
   return access;
 }
 
+function hasCodexAccess(ctx) {
+  return !ctx.actor.bot && (ctx.actor.id===ctx.ownerId ||
+    (ctx.actor.id===ctx.operatorId && memberAccess(ctx,ctx.actor).admin));
+}
+
 function checkPlan(ctx, plan, allowed) {
   const operator = checkOperator(ctx, allowed);
-  if (plan.direction === 'demote' && ctx.actor.id !== ctx.ownerId && !(ctx.actor.id===ctx.operatorId && operator.admin)) {
+  if (plan.direction === 'demote' && !hasCodexAccess(ctx)) {
     throw new RuleError('التخفيض يحتاج صلاحية Administrator.',403);
   }
   if (ctx.actor.id === ctx.target.id || ctx.target.id === ctx.ownerId || ctx.target.bot) {
@@ -146,4 +151,4 @@ function makeService(store, gateway, allowed = new Set()) {
   }
   return { preview, execute, recover, checkOperator: ctx => checkOperator(ctx, allowed) };
 }
-module.exports = { makeService, checkOperator, memberAccess };
+module.exports = { makeService, checkOperator, memberAccess, hasCodexAccess };

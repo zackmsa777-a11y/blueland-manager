@@ -8,6 +8,51 @@ const {featureName,inspectActions}=require('../src/codex-actions');
 const {parseChat}=require('../src/commands');
 const bot=catalog.botId, actor='200000000000000001', channel='200000000000000002';
 
+test('only the registered administrator and actual owner have Codex access',()=>{
+  const {hasCodexAccess}=require('../src/promotions');
+  const role={id:'123',position:1,permissions:'8'};
+  const ctx={actor:{id:'someone',roles:['123'],bot:false},ownerId:'owner',operatorId:actor,roles:new Map([['123',role]])};
+  assert.equal(hasCodexAccess(ctx),false);
+  ctx.actor.id=actor;assert.equal(hasCodexAccess(ctx),true);
+  role.permissions='0';assert.equal(hasCodexAccess(ctx),false);
+  ctx.actor.id='owner';assert.equal(hasCodexAccess(ctx),true);
+  ctx.actor.bot=true;assert.equal(hasCodexAccess(ctx),false);
+});
+test('memory persists per actor and is included in authorized requests',async t=>{
+  const h=fixture(t);
+  await h.handle(h.message('+memory save Use Arabic for moderation.'));
+  await h.handle(h.message('<@'+bot+'> hello'));
+  assert.equal(h.calls[0].memoryNotes[0].note,'Use Arabic for moderation.');
+  assert.deepEqual(h.db.codex.notes('other'),[]);
+  assert.equal(h.db.codex.forgetNote('other',h.calls[0].memoryNotes[0].id),0);
+  await h.handle(h.message('+memory forget '+h.calls[0].memoryNotes[0].id));
+  assert.deepEqual(h.db.codex.notes(actor),[]);
+  const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'blueland-memory-'));
+  try {
+    const filename=path.join(dir,'state.sqlite');
+    let store=openStore(filename);store.codex.note(actor,'persistent');store.close();
+    store=openStore(filename);assert.equal(store.codex.notes(actor)[0].note,'persistent');store.close();
+  } finally {fs.rmSync(dir,{recursive:true,force:true});}
+});
+test('workspace progress counts completed commands and distinct edited files before the final reply',async t=>{
+  const h=fixture(t), events=[], actions=['workspace_edit','workspace_edit','workspace_command'].map(op=>({op,target:op.endsWith('edit')?'note.md':'tests',value:'',extra:''}));
+  const handle=createCodexHandler({store:h.db.codex,isAdmin:async()=>true,
+    ask:async q=>q.workspaceResults?{answer:'done',actions:[]}:{answer:'',actions},
+    workspace:async a=>a.op==='edit'?{text:'saved',edited:'note.md'}:{ran:true,exit:0,text:'ok'}});
+  const msg=h.message('+code work',{reply:async data=>{events.push(data.content);return {edit:async x=>events.push(x.content)};}});
+  await handle(msg);
+  assert.match(events[0],/Thinking/);
+  assert.match(events.at(-2),/Finished · Edited 1 file · Ran 1 command/);assert.equal(events.at(-1),'done');
+});
+test('compiled Discord commands run in QuickJS and return only data',async()=>{
+  const {runFeature}=require('../src/codex-feature');
+  const fn='input => ({answer: input.args.toUpperCase(), actions: []})';
+  assert.equal(await runFeature(fn,{},true),true);
+  assert.deepEqual(await runFeature(fn,{args:'test'}),{answer:'TEST',actions:[]});
+  await assert.rejects(runFeature('not valid JS',{},true));
+});
+
 function fixture(t) {
   const db=openStore(':memory:');t.after(()=>db.close());
   const replies=[],calls=[];

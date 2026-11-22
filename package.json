@@ -13,6 +13,7 @@
     "roles:sync": "node --env-file-if-exists=.env scripts/rebind-roles.js --apply"
   },
   "dependencies": {
-    "discord.js": "14.28.1"
+    "discord.js": "14.28.1",
+    "quickjs-emscripten": "0.32.0"
   }
 }

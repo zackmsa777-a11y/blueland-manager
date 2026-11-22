@@ -3,7 +3,7 @@
 const { catalog, RuleError } = require('./ladder');
 const { createMessageHandler } = require('./chat');
 const { liveDirectory } = require('./directory');
-const { makeService, memberAccess } = require('./promotions');
+const { makeService, hasCodexAccess } = require('./promotions');
 const { createCodexHandler } = require('./codex-chat');
 const { createCommunity } = require('./community');
 const { communityGateway } = require('./discord-community');
@@ -71,7 +71,7 @@ function connectDiscord(store, env) {
   const run=commandRunner({store,community,promotions:service,readyGuild,pair});
   async function isAdmin(actor) {
     const ctx=await context(actor);
-    return !ctx.actor.bot && (actor===ctx.ownerId || (actor===ctx.operatorId && memberAccess(ctx,ctx.actor).admin));
+    return hasCodexAccess(ctx);
   }
   const codex=createCodexHandler({store:store.codex,isAdmin,run});
   const onMessage=createMessageHandler({authorize:community.dashboard,service,store,publicOrigin:env.PUBLIC_ORIGIN,run,parse:parseChat,codex});

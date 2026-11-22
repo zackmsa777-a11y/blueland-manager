@@ -2,9 +2,9 @@
 const net = require('node:net');
 const {RuleError} = require('./ladder');
 
-function requestCodex(input) {
+function requestCodex(input,path=process.env.CODEX_SOCKET || '/run/blueland-codex.sock') {
   return new Promise((resolve,reject)=>{
-    const socket=net.createConnection(process.env.CODEX_SOCKET || '/run/blueland-codex.sock');
+    const socket=net.createConnection(path);
     socket.setEncoding('utf8');
     let output='';
     const timeout=setTimeout(()=>socket.destroy(new Error('timeout')),190000);

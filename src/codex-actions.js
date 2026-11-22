@@ -2,11 +2,13 @@
 const {ChannelType,PermissionFlagsBits:P} = require('discord.js');
 const {catalog,RuleError}=require('./ladder');
 const {commands,chatAliases}=require('./commands');
+const {runFeature}=require('./codex-feature');
 
 const native=new Set(['server','roles','ping','help','rank','top','promote','demote','warn','unwarn','timeout','untimeout','mute','unmute','lock','unlock','kick','ban','unban']);
 const operations=[...native,'say','create_text','create_voice','create_category','create_forum','create_stage','create_announcement','move_channel','rename_channel','delete_channel','topic','slowmode','create_role','rename_role','role_color','role_permissions','delete_role','give_role','take_role','nickname','voice_move','voice_disconnect','voice_mute','voice_deafen','react','create_thread','archive_thread','pin','unpin','delete_message','save_command','forget_command'];
+operations.push('vps_status','vps_restart','note_save','note_forget','workspace_files','workspace_read','workspace_edit','workspace_command');
 const destructive=new Set(['delete_channel','delete_role','delete_message','role_permissions','ban','kick','forget_command']);
-const reserved=new Set(['model','موديل','لوحة','ترقية','تخفيض',...Object.keys(chatAliases),...Object.values(chatAliases),...commands.map(c=>c.name)]);
+const reserved=new Set(['vps','memory','code','model','موديل','لوحة','ترقية','تخفيض',...Object.keys(chatAliases),...Object.values(chatAliases),...commands.map(c=>c.name)]);
 const managedRanks=new Set(catalog.categories.flatMap(g=>[...g.ranks,g.variant,...g.helpers]));
 const id=value=>{if (!/^\d{17,20}$/.test(value)) throw new RuleError('معرّف الهدف غير صالح.'); return value;};
 function featureName(value) {
@@ -21,7 +23,7 @@ function bounded(value,min,max) {
 function inspectActions(actions) {
   if (!Array.isArray(actions)||actions.length>12) throw new RuleError('تعذّر قراءة إجراءات Codex.');
   for (const a of actions) {
-    if (!a||!operations.includes(a.op)||['target','value','extra'].some(k=>typeof a[k]!=='string'||a[k].length>1800)) throw new RuleError('اقترح Codex إجراء غير مدعوم.');
+    if (!a||!operations.includes(a.op)||['target','value','extra'].some(k=>typeof a[k]!=='string'||a[k].length>(a.op==='workspace_edit'?9000:a.op==='save_command'&&k==='extra'?6000:1800))) throw new RuleError('اقترح Codex إجراء غير مدعوم.');
   }
   return actions;
 }
@@ -57,7 +59,8 @@ async function applyAction(a,{guild,actor,channel,delivery,run,store}) {
   if (a.op==='save_command') {
     const name=featureName(target);
     if (!val.trim()) throw new RuleError('أضف وصفًا لما يفعله الأمر.');
-    store.save(name,val); return 'حُفظ الأمر +'+name;
+    if (a.extra) await runFeature(a.extra,{},true);
+    store.save(name,val,a.extra); return 'حُفظ الأمر +'+name;
   }
   if (a.op==='forget_command') {
     const name=featureName(target);
