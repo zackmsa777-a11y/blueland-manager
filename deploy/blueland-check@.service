@@ -1,5 +1,6 @@
 [Service]
 DynamicUser=yes
+User=blueland-test
 ExecStart=/usr/bin/python3 -I /usr/local/libexec/blueland-check.py
 StandardInput=socket
 StandardOutput=socket

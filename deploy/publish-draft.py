@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Commit a validated Discord feature manifest after verifying the human message with Discord."""
+"""Review, test and fast-forward an application commit after an independent Discord approval."""
 import datetime
 import fcntl
 import json
@@ -198,7 +198,7 @@ def preview(db,request,api,now):
         head=refresh()
         if head!=request["base"]: return {"head":head}
         rev,paths,diff=candidate(request["base"],request["patch"])
-        caption=(f"مراجعة نشر BlueLand · {rev[:12]}\n"+", ".join(paths)[:900]+
+        caption=(f"مراجعة نشر BlueLand · {rev[:12]}\nعدد الملفات المتغيّرة: {len(paths)}"+
                  "\nالفرق الكامل في الخاص. بعد مراجعته ردّ على هذه الرسالة بـ **تأكيد** خلال 30 دقيقة لاختبار هذه النسخة ونشرها.")
         db.execute("INSERT INTO app_reviews(trigger,channel,base,revision,created,caption,diff) VALUES(?,?,?,?,?,?,?)",
                    (request["message"],request["channel"],request["base"],rev,now,caption,diff))

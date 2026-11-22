@@ -1,7 +1,5 @@
 import datetime
-import hashlib
 import importlib.util
-import json
 import os
 from pathlib import Path
 import subprocess
@@ -13,7 +11,6 @@ ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("publisher",ROOT/"deploy/publish-draft.py")
 publisher = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(publisher)
-features = (ROOT/publisher.FEATURES).read_bytes()
 
 
 class PublisherTests(unittest.TestCase):
@@ -90,6 +87,10 @@ class PublisherTests(unittest.TestCase):
                     checked.append(sha)
                     self.assertEqual(publisher.git(["show",sha+":src/example.js"]),b"module.exports=2;\n")
                     return {"ok":True}
+                with self.assertRaises(publisher.PublishError):
+                    publisher.confirm(db,dict(approval,channel="other"),api,110,tests,lambda:True)
+                with self.assertRaises(publisher.PublishError):
+                    publisher.confirm(db,approval,api,2000,tests,lambda:True)
                 with self.assertRaises(publisher.PublishError):
                     publisher.confirm(db,approval,api,110,lambda _:{"ok":False,"detail":"failed"},lambda:True)
                 self.assertEqual(publisher.refresh(),base)
