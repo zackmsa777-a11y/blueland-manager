@@ -49,6 +49,39 @@ def status(revision=""):
     return data
 
 
+def memory():
+    fields = {}
+    for line in Path("/proc/meminfo").read_text().splitlines():
+        name, value = line.split(":", 1)
+        if name in ("MemTotal", "MemAvailable", "SwapTotal", "SwapFree"):
+            fields[name] = int(value.split()[0]) * 1024
+    total, available = fields["MemTotal"], fields["MemAvailable"]
+    services = {}
+    for unit in ("blueland", "blueland-hermes"):
+        path = Path("/sys/fs/cgroup/system.slice") / (unit + ".service") / "memory.current"
+        if path.is_file():
+            services[unit] = int(path.read_text())
+    processes = []
+    output = subprocess.check_output(["/usr/bin/ps", "-eo", "pid=,rss=,comm=", "--sort=-rss"],
+                                     text=True, errors="replace", timeout=5)
+    for line in output.splitlines()[:5]:
+        pid, rss, name = line.split(None, 2)
+        processes.append({"pid":int(pid), "rss_bytes":int(rss)*1024, "name":re.sub(r"[^\w. -]","",name)})
+    return {"total_bytes":total, "available_bytes":available, "used_bytes":total-available,
+            "swap_total_bytes":fields["SwapTotal"], "swap_used_bytes":fields["SwapTotal"]-fields["SwapFree"],
+            "service_bytes":services, "top_processes":processes}
+
+
+def describe_memory(data):
+    used, total, available = (data[k] / 1024**3 for k in ("used_bytes","total_bytes","available_bytes"))
+    lines = [f"الرام المستخدمة {used:.2f} من {total:.2f} GiB · المتاح {available:.2f} GiB"]
+    for unit, size in data["service_bytes"].items():
+        lines.append(f"{unit} · {size/1024**2:.0f} MiB")
+    lines.append("أعلى العمليات حسب RSS")
+    lines.extend(f"{p['name']} ({p['pid']}) · {p['rss_bytes']/1024**2:.0f} MiB" for p in data["top_processes"])
+    return "\n".join(lines)
+
+
 def reviews():
     db = sqlite3.connect(Path(os.environ["HERMES_HOME"]) / "blueland-reviews.sqlite", timeout=5)
     db.execute("CREATE TABLE IF NOT EXISTS reviews (room TEXT PRIMARY KEY,base TEXT,head TEXT,expires INTEGER)")
@@ -282,13 +315,17 @@ def code_tool(params, **kwargs):
 def tool(params, **kwargs):
     from gateway.session_context import get_session_env
     try:
-        if params.get("action","status") == "preview":
+        if params.get("action") == "memory":
+            operator(get_session_env("HERMES_SESSION_PLATFORM"),get_session_env("HERMES_SESSION_USER_ID"),
+                     get_session_env("HERMES_SESSION_CHAT_ID"))
+            data = memory()
+        elif params.get("action","status") == "preview":
             data = preview(get_session_env("HERMES_SESSION_USER_ID"),get_session_env("HERMES_SESSION_CHAT_ID"),
                            get_session_env("HERMES_SESSION_PLATFORM"))
         else:
             data = status(params.get("revision",""))
         return json.dumps(data,ensure_ascii=False)
-    except (OSError, KeyError, ValueError, sqlite3.Error) as err:
+    except (OSError, KeyError, ValueError, sqlite3.Error, subprocess.SubprocessError) as err:
         return json.dumps({"error":str(err)},ensure_ascii=False)
 
 
@@ -297,6 +334,8 @@ def command(raw_args, *, source=None, platform=""):
     try:
         actor, room = str(source.user_id), str(source.chat_id)
         operator(platform,actor,room)
+        if args == ["ram"]:
+            return describe_memory(memory())
         if not args or args[0]=="status" and len(args)<=2:
             return describe(status(args[1] if len(args)==2 else ""))
         if args==["deploy"]:
@@ -318,7 +357,7 @@ def command(raw_args, *, source=None, platform=""):
                 db.close()
         if len(args)==2 and args[0]=="confirm":
             return describe(confirm(actor,room,platform,args[1]))
-        return "/release status [SHA] | deploy | diff [page] | confirm SHA | discard"
+        return "/release status [SHA] | ram | deploy | diff [page] | confirm SHA | discard"
     except ValueError as err:
         return str(err)
     except (OSError, KeyError, AttributeError, RuntimeError, sqlite3.Error, subprocess.TimeoutExpired):
@@ -332,7 +371,7 @@ def register(ctx):
         "path":{"type":"string"},"sha256":{"type":"string"},"old":{"type":"string"},"new":{"type":"string"},"content":{"type":"string"},
         "start_line":{"type":"integer","minimum":1},"line_count":{"type":"integer","minimum":1}},"required":["action"]}})
     ctx.register_tool(name="blueland_release",toolset="blueland_release",handler=tool,schema={
-        "name":"blueland_release","description":"Read live VPS status or preview the current room's bot edits or a newer main commit. For feature and command requests, first implement them using blueland_bot_code. Show changed files, diff and the exact human confirmation command from preview.",
-        "parameters":{"type":"object","properties":{"action":{"type":"string","enum":["status","preview"]},
+        "name":"blueland_release","description":"Read current VPS RAM, swap, bot service memory and top processes with action memory. Use status for the live revision, or preview to review the current room's edits. Use blueland_bot_code for code changes. Show the human confirmation command from preview.",
+        "parameters":{"type":"object","properties":{"action":{"type":"string","enum":["status","preview","memory"]},
                       "revision":{"type":"string","description":"Optional Git commit ID for status."}},"required":["action"]}})
-    ctx.register_command("release",command,"عرض تعديلات البوت وتأكيد نشر النسخة المراجعة",args_hint="status [SHA] | deploy | diff [page] | confirm SHA | discard")
+    ctx.register_command("release",command,"حالة البوت واستهلاك الرام ومراجعة النشر",args_hint="status [SHA] | ram | deploy | diff [page] | confirm SHA | discard")
