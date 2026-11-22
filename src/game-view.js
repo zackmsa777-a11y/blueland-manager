@@ -67,8 +67,12 @@ function controls(game) {
   return [row([cancel])];
 }
 
-function cardFile(card, description) {
-  return {attachment: renderGameCard(card), name: `${card.game}.png`, description};
+function cardMessage(card, description) {
+  const name = `${card.game}.png`;
+  return {
+    files: [{attachment: renderGameCard(card), name, description}],
+    embeds: [{image: {url: `attachment://${name}`}}]
+  };
 }
 
 function gamePanel(game) {
@@ -78,7 +82,7 @@ function gamePanel(game) {
   const highlightWheel = game.kind === 'roulette' && (game.phase === 'done' || (game.phase === 'play' && game.lastOut));
   const selected = highlightWheel ? items.length - 1 : -1;
   return {
-    files: [cardFile({game: game.kind, title, subtitle, footer, items, selected}, `${title} · ${subtitle} · ${footer}`)],
+    ...cardMessage({game: game.kind, title, subtitle, footer, items, selected}, `${title} · ${subtitle} · ${footer}`),
     components: controls(game),
     allowedMentions: {parse: []}
   };
@@ -88,7 +92,7 @@ function privateRole(game, id) {
   const mafia = game.mafia.has(id);
   const title = mafia ? 'أنت من المافيا' : 'أنت من أهل المدينة';
   const footer = mafia ? 'صوّت بالليل لإخراج لاعب من المدينة.' : 'صوّت بالنهار لكشف المافيا.';
-  return {files: [cardFile({game: 'mafia', title, footer, role: mafia ? 'mafia' : 'citizen'}, `${title} · ${footer}`)]};
+  return cardMessage({game: 'mafia', title, footer, role: mafia ? 'mafia' : 'citizen'}, `${title} · ${footer}`);
 }
 
 function voteMenu(game, id) {

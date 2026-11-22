@@ -45,7 +45,11 @@ function fixture(t) {
       isStringSelectMenu: () => Boolean(options.values),
       isButton: () => Boolean(options.customId && !options.values),
       async deferReply() { this.deferred = true; },
-      async editReply(payload) { panel = payload; return message; },
+      async editReply(payload) {
+        assert.equal(payload.embeds[0].image.url, 'attachment://' + payload.files[0].name);
+        panel = payload;
+        return message;
+      },
       async deferUpdate() {},
       async reply(payload) { reply = payload; },
       async update(payload) { reply = payload; }
@@ -135,6 +139,7 @@ test('mafia sends role PNGs and vote menus only in private replies', async t => 
     const role = await f.click(player, 'role');
     assert.equal(role.flags, MessageFlags.Ephemeral);
     assertPng(role.files[0], 'mafia');
+    assert.equal(role.embeds[0].image.url, 'attachment://mafia.png');
     const {description} = role.files[0];
     assert.match(description, /أنت من (المافيا|أهل المدينة)/);
     if (description.includes('أنت من المافيا')) mafiaPlayer = player;
