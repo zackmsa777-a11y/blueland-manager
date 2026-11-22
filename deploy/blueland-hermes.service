@@ -16,7 +16,7 @@ Environment=BLUELAND_GUILD_ID=1573975432838127708
 Environment=DISCORD_COMMAND_SYNC_POLICY=safe
 Environment=PYTHONDONTWRITEBYTECODE=1
 EnvironmentFile=/etc/blueland-hermes/discord.env
-ExecStart=/opt/blueland-hermes/venv/bin/hermes gateway run
+ExecStart=/opt/blueland-hermes/venv/bin/hermes gateway run --external-supervisor --replace
 Restart=on-failure
 RestartSec=5
 UMask=0077
