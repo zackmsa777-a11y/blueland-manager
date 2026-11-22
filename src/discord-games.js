@@ -3,6 +3,7 @@
 const {randomInt, randomUUID} = require('node:crypto');
 const {MessageFlags} = require('discord.js');
 const {RuleError} = require('./ladder');
+const {commandName, subcommandName} = require('./command-aliases');
 const {games, moves, createGame, start, eligiblePlayers, choose, ready, advance,
   spinRoulette, stopRoulette, resolveRoulette} = require('./game-rules');
 const {gamePanel, privateRole, voteMenu, rouletteMenu} = require('./game-view');
@@ -164,8 +165,7 @@ function createDiscordGames(economy) {
     game.timer.unref();
   }
 
-  async function open(i) {
-    const kind = i.options.getSubcommand();
+  async function open(i, kind) {
     if (!Object.hasOwn(games, kind)) throw new RuleError('اختر لعبة من أمر /game.');
     if (rooms.has(i.channelId)) throw new RuleError('في لعبة مفتوحة في الروم. انضم لها أو انتظر نهايتها.');
     const game = Object.assign(createGame(kind, i.user.id, playerName(i)), {
@@ -276,8 +276,9 @@ function createDiscordGames(economy) {
   }
 
   async function handle(i) {
-    const opening = i.isChatInputCommand() && i.commandName === 'game';
-    const key = opening ? `blgshop:${i.options.getSubcommand(false)}` : i.customId;
+    const opening = i.isChatInputCommand() && commandName(i.commandName) === 'game';
+    const kind = opening ? subcommandName('game', i.options.getSubcommand(false)) : null;
+    const key = opening ? `blgshop:${kind}` : i.customId;
     const opensShop = (opening || i.isButton()) && ['blgshop:bag', 'blgshop:shop'].includes(key);
     const changesShop = i.isStringSelectMenu() && ['blgshop:buy', 'blgshop:equip'].includes(key);
     const shop = opensShop || changesShop;
@@ -285,7 +286,7 @@ function createDiscordGames(economy) {
     if (!opening && !control && !shop) return false;
     try {
       if (shop) await economyAction(i, key.slice('blgshop:'.length));
-      else await (opening ? open(i) : component(i));
+      else await (opening ? open(i, kind) : component(i));
     } catch (err) {
       const content = err instanceof RuleError ? err.message : 'تعذّر إتمام خطوة اللعبة. حاول مرة ثانية.';
       if (opening && (i.deferred || i.replied)) await i.editReply({content}).catch(() => {});

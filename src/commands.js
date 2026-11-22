@@ -4,6 +4,7 @@ const {Routes} = require('discord.js');
 const {catalog,roles,RuleError} = require('./ladder');
 const {kinds,requestStates} = require('./community');
 const {activity}=require('../config/discord-features.json');
+const {withArabicAliases, commandName, subcommandName} = require('./command-aliases');
 const formatActivity=(template,values)=>template.replace(/\{(\w+)\}/g,(match,key)=>Object.hasOwn(values,key)?String(values[key]):match);
 
 const option=(type,name,description,required=true,extra={})=>({type,name,description,required,...extra});
@@ -13,7 +14,7 @@ const person=()=>option(6,'member','العضو في سيرفر BlueLand');
 const reason=(required=true)=>option(3,'reason','سبب الإجراء',required,{max_length:350});
 const number=(name,description,max=2147483647)=>option(4,name,description,true,{min_value:1,max_value:max});
 const id=()=>number('id','رقم السجل');
-const commands=[
+const baseCommands=[
   cmd('ping','افحص اتصال BlueLand Manager'),cmd('help','دليل أوامر BlueLand'),
   cmd('server','معلومات سيرفر BlueLand'),cmd('roles','عدد الرولات وفئات الترقية'),
   cmd('promote','ترقية عضو درجة واحدة',[person()]),cmd('dashboard','احصل على رمز دخول لوحة الطاقم'),
@@ -47,10 +48,12 @@ const commands=[
     sub('shop','افتح متجر إطارات الروليت بالنقاط')
   ])
 ];
+const commands=withArabicAliases(baseCommands);
 const chatAliases={
-  'تخفيض':'demote','بنق':'ping','مساعدة':'help','اوامر':'help','أوامر':'help','رولات':'roles','سيرفر':'server','مستوى':'rank','توب':'top',
+  'تخفيض':'demote','بنق':'ping','مساعدة':'help','اوامر':'help','أوامر':'help','ر':'roles','رول':'roles','رولات':'roles','سيرفر':'server','مستوى':'rank','توب':'top',
   'تحذير':'warn','سحب-تحذير':'unwarn','تحذيرات':'warnings','تايم':'timeout','فك-تايم':'untimeout',
-  'ميوت':'mute','فك-ميوت':'unmute','قفل':'lock','فتح':'unlock','طرد':'kick','حظر':'ban','فك-حظر':'unban'
+  'ميوت':'mute','فك-ميوت':'unmute','قفل':'lock','فتح':'unlock','طرد':'kick','حظر':'ban','بان':'ban','بأن':'ban',
+  'فك-حظر':'unban','فك-بان':'unban','فك-بأن':'unban'
 };
 const helpText=[
   '**أوامر BlueLand Empire**',
@@ -60,12 +63,16 @@ const helpText=[
   'الطلبات · /request submit للتقديم، /request status لمتابعة القرار',
   'الدعم · /ticket create لفتح تذكرة خاصة ثم claim أو close من داخلها',
   'الألعاب · /game roulette، /game chairs، /game mafia، /game rps، /game bag، /game shop',
+  'اختصارات عربية · /ر للرولات، /بنق، /سيرفر، /مستوى، /توب، /لوحة',
+  'الإشراف بالعربي · /تحذير، /سحب-تحذير، /تحذيرات، /تايم، /فك-تايم، /ميوت، /فك-ميوت، /قفل، /فتح، /طرد، /بان، /فك-بان',
+  'الطلبات والألعاب بالعربي · /طلب تقديم، /طلب حالة، /تذكرة فتح، /ألعاب روليت، /ألعاب كراسي، /ألعاب مافيا، /ألعاب حجر-ورقة-مقص، /ألعاب حقيبة، /ألعاب متجر',
+  'اختصارات الشات · +ر للرولات، +بان @العضو السبب، +فك-بان معرّف_العضو',
   'السيرفر · /roles، /server، /ping، /rank، /top'
 ].join('\n');
 function parseChat(text) {
   if (!text.startsWith('+')) return null;
   const [first,...parts]=text.slice(1).trim().split(/\s+/u);
-  const action=chatAliases[first] || (Object.values(chatAliases).includes(first)?first:null);
+  const action=Object.hasOwn(chatAliases,first) ? chatAliases[first] : Object.values(chatAliases).includes(first) ? first : null;
   if (!action) return null;
   if (action === 'demote' && (parts.length !== 1 || !/^<@!?\d{17,20}>$/.test(parts[0]))) throw new RuleError('اكتب +تخفيض مع منشن عضو واحد.');
   if (['ping','help','server','roles','top'].includes(action)) return {action};
@@ -144,7 +151,7 @@ function commandRunner({store,community,promotions,readyGuild,pair}) {
 }
 function interactionInput(i) {
   const o=i.options;
-  return {action:i.commandName,sub:o.getSubcommand(false),actor:i.user.id,channel:i.channelId,delivery:'slash:'+i.id,created:i.createdTimestamp,
+  return {action:commandName(i.commandName),sub:subcommandName(i.commandName,o.getSubcommand(false)),actor:i.user.id,channel:i.channelId,delivery:'slash:'+i.id,created:i.createdTimestamp,
     target:o.getUser('member')?.id || o.getString('user_id'),minutes:o.getInteger('minutes'),id:o.getInteger('id'),caseId:o.getInteger('id'),
     reason:o.getString('reason'),subject:o.getString('subject'),kind:o.getString('kind'),details:o.getString('details')};
 }
