@@ -7,7 +7,7 @@ Group=blueland
 Environment=HOME=/home/ubuntu
 Environment=CODEX_HOME=/home/ubuntu/.codex
 WorkingDirectory=/tmp
-ExecStart=/usr/bin/python3 /opt/blueland-manager/deploy/codex-worker.py
+ExecStart=/usr/bin/python3 /usr/local/libexec/blueland-codex-worker.py
 StandardInput=socket
 StandardOutput=socket
 StandardError=journal

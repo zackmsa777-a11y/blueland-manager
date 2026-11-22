@@ -19,6 +19,8 @@
 
 أنشئ مستخدم نظام مستقلًا باسم `blueland-workspace` ونسخة Git محلية مستقلة في `/var/lib/blueland-workspace/project` بملكيته. ثبّت تبعيات المشروع فيها من ملف القفل. شغّل `systemctl daemon-reload` ثم `systemctl enable --now blueland-codex.socket blueland-workspace.socket`. تحفظ نسخة التطوير تعديلات الملفات بعد انتهاء الطلب، ويستطيع مشغّل VPS مراجعتها عبر Git.
 
+ثبّت سكربتي `deploy/workspace.py` و`deploy/codex-worker.py` في `/usr/local/libexec/` تحت اسمي `blueland-workspace.py` و`blueland-codex-worker.py` بملكية root.
+
 لتفعيل النشر من ديسكورد، أنشئ مستخدم نظام `blueland-release` بمجلد `/var/lib/blueland-releases` بملكيته ووضع `0755`. وجّه الرابط الرمزي `current` داخله إلى النسخة الشغّالة في `/opt/blueland-manager` عند الإعداد الأول. ثبّت `deploy/release.py` بملكية root في `/usr/local/libexec/blueland-release.py`، و`deploy/blueland-release-app.conf` في `/etc/systemd/system/blueland.service.d/`، ثم أعد تحميل وحدات systemd. تختص خدمة النشر بتطبيق Discord واللوحة. تبقى وحدات النظام وأدوات SSH تحت إدارة مشغّل الخادم.
 
 ## التشغيل المحلي

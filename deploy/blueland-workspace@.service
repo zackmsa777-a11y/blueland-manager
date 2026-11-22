@@ -2,7 +2,7 @@
 User=blueland-workspace
 Group=blueland-workspace
 WorkingDirectory=/var/lib/blueland-workspace/project
-ExecStart=/usr/bin/python3 /opt/blueland-manager/deploy/workspace.py
+ExecStart=/usr/bin/python3 /usr/local/libexec/blueland-workspace.py
 StandardInput=socket
 StandardOutput=socket
 StandardError=journal
