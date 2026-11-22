@@ -172,23 +172,62 @@ test('publishing previews app code and confirmation may come from the other auth
   assert.equal(requests[1].patch,undefined);
 });
 
-test('channel context is excluded when planning actions, and its cursor advances',async t=>{
-  const h=fixture(t),requests=[];
-  const entry={id:'500',author:{id:'333',username:'member'},content:'Some earlier message.',attachments:{size:0}};
-  const page=new Map([[entry.id,entry]]);
-  const chan={sendTyping:async()=>{},permissionsFor:()=>({has:()=>true}),messages:{fetch:async()=>page}};
+test('every mention or reply receives the previous ten messages while action planning excludes chat history',async t=>{
+  const h=fixture(t),requests=[],fetches=[];
+  const messages=Array.from({length:13},(_,i)=>({id:String(i+1),author:{id:actor,username:'member'},content:'message '+(i+1),attachments:{size:0}}));
+  const parent={...messages[11],author:{id:bot,username:'BlueLand',bot:true},reference:{messageId:'11'},channelId:channel,guildId:catalog.guildId};
+  messages[11]=parent;
+  h.db.codex.begin('11',actor);
+  const chan={sendTyping:async()=>{},permissionsFor:()=>({has:()=>true}),messages:{fetch:async options=>{
+    fetches.push(options);
+    return messages.filter(m=>Number(m.id)<Number(options.before)).reverse().slice(0,options.limit);
+  }}};
   const handle=createCodexHandler({store:h.db.codex,isAdmin:async id=>id===actor,ask:async req=>{
     requests.push(req);
     return req.context.recentMessages?{answer:'',actions:[{op:'note_save',target:'',value:'unrequested note',extra:''}]}:{answer:'ok',actions:[]};
   }});
-  await handle(h.message('<@'+bot+'> hello',{channel:chan}));
-  assert.equal(requests[0].context.recentMessages[0].content,entry.content);
+  await handle(h.message('<@'+bot+'> hello',{id:'13',channel:chan}));
+  assert.deepEqual(requests[0].context.recentMessages.map(m=>m.id),messages.slice(2,12).map(m=>m.id));
+  assert.equal(requests[0].context.recentMessages.at(-1).bot,true);
+  assert.equal(requests[0].context.recentMessages.at(-1).replyTo,'11');
   assert.equal(requests[1].context.recentMessages,undefined);
+  await handle(h.message('hello again',{id:'14',channel:chan,reference:{channelId:channel,messageId:parent.id},fetchReference:async()=>parent}));
+  assert.deepEqual(requests[2].context.recentMessages.map(m=>m.id),messages.slice(3).map(m=>m.id));
+  assert.equal(requests[3].context.recentMessages,undefined);
+  assert.deepEqual(fetches,['13','14'].map(before=>({before,limit:10,cache:false})));
   assert.deepEqual(h.db.codex.notes(actor),[]);
-  await handle(h.message('<@'+bot+'> hello again',{channel:chan}));
-  assert.equal(requests.length,3);assert.equal(requests[2].context.recentMessages,undefined);
 });
 
+test('colloquial continuation and replying to an unlinked bot clarification resume the caller’s draft with recent chat',async t=>{
+  for (const replyToClarification of [false,true]) {
+    const h=fixture(t),requests=[];
+    const task=h.db.codex.startTask('101',actor,channel,'Finish my draft');
+    h.db.codex.recordStep(task,'edit','src/report.js',{edited:'src/report.js'});
+    h.db.codex.startTask('102','other-operator',channel,'A different draft');
+    const parent={id:'111',author:{id:bot,username:'BlueLand',bot:true},content:'رد على رسالة التوقف الأصلية',attachments:{size:0},
+      channelId:channel,guildId:catalog.guildId,reference:{messageId:'110'}};
+    const chan={sendTyping:async()=>{},permissionsFor:()=>({has:()=>true}),messages:{fetch:async()=>[parent]}};
+    const handle=createCodexHandler({store:h.db.codex,isAdmin:async id=>id===actor,ask:async req=>{requests.push(req);return {actions:[],answer:'done'};},
+      workspace:async()=>({exit:0,ran:true,text:' M src/report.js'})});
+    const msg=replyToClarification?h.message('كمل',{id:'112',channel:chan,reference:{channelId:channel,messageId:parent.id},fetchReference:async()=>parent}):
+      h.message('<@'+bot+'> كمل الي كنت بتعمله',{id:'112',channel:chan});
+    await handle(msg);
+    assert.equal(requests[0].prompt,'Finish my draft');
+    assert.deepEqual(requests[0].taskCheckpoint.files,['src/report.js']);
+    assert.deepEqual(requests[0].context.recentMessages.map(m=>m.id),['111']);
+    assert.equal(h.db.codex.latestTask('other-operator',channel).id,'102');
+  }
+});
+
+test('automatic history checks both the bot and member before fetching the channel',async t=>{
+  for (const denied of [actor,bot]) {
+    const h=fixture(t);let fetches=0;
+    const chan={sendTyping:async()=>{},permissionsFor:member=>({has:()=>(member.id||member)!==denied}),
+      messages:{fetch:async()=>{fetches++;return [];}}};
+    await h.handle(h.message('<@'+bot+'> hello',{channel:chan}));
+    assert.equal(fetches,0);assert.equal(h.calls[0].context.recentMessages,undefined);
+  }
+});
 function fixture(t) {
   const db=openStore(':memory:');t.after(()=>db.close());
   const replies=[],calls=[];
