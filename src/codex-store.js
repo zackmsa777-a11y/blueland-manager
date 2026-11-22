@@ -35,7 +35,7 @@ function openCodexStore(db) {
         JOIN codex_deliveries d ON d.id=(SELECT dd.id FROM codex_deliveries dd
           WHERE dd.id=t.id OR dd.id IN (SELECT message FROM codex_workspace_turns WHERE task=t.id)
           ORDER BY dd.created DESC,dd.rowid DESC LIMIT 1)
-        WHERE t.active=1 AND d.status IN ('working','paused') ORDER BY t.updated`).all();
+        WHERE t.active=1 AND d.status IN ('working','paused','started') ORDER BY t.updated`).all();
     },
     linkTask(message,id) {db.prepare('INSERT OR IGNORE INTO codex_workspace_turns VALUES(?,?)').run(message,id);},
     clarify(task,text) {

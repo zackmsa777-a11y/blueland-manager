@@ -150,6 +150,14 @@ test('a running task can be stopped while Codex is thinking, before it makes ano
   assert.equal(edits,1);assert.equal(s.delivery(original.id).status,'stopped');assert.deepEqual(s.runningTasks(),[]);
 });
 
+test('legacy started deliveries are recovered only if linked to a saved workspace task',t=>{
+  const s=fixture(t).db.codex;
+  s.begin('other',actor);s.begin('original',actor);s.startTask('original',actor,channel,'Finish report');
+  s.finish('original','paused');s.begin('last',actor);s.linkTask('last','original');
+  assert.deepEqual(s.runningTasks().map(r=>r.message),['last']);
+  s.finish('last','interrupted');assert.deepEqual(s.runningTasks(),[]);
+});
+
 test('a required decision preserves the checkpoint and a direct reply supplies it',async t=>{
   const h=fixture(t),s=h.db.codex,requests=[];
   const handle=createCodexHandler({store:s,isAdmin:async id=>id===actor,workspace:async()=>({text:'ok',exit:0}),ask:async q=>{
