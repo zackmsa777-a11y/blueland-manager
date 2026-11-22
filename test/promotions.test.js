@@ -92,6 +92,36 @@ test('numbered chat promotion crosses categories in one audited operation withou
   await assert.rejects(h.service.execute({...h.request,id:row.id,count:3}),/مستخدم لطلب آخر/);
 });
 
+test('numbered discord demotion keeps authorization and delivers one audited role change',async t=>{
+  const {commandRunner,parseChat} = require('../src/commands');
+  const h = harness(t,null,[mod.variant,mod.ranks[1],...staff.helpers,...mod.helpers,unrelated]);
+  const run = commandRunner({store:h.store,promotions:h.service});
+  const handle = createMessageHandler({service:h.service,store:h.store,run,parse:parseChat});
+  const replies = [];
+  const message = {id:'1574000000000000013',guildId:catalog.guildId,inGuild:()=>true,webhookId:null,
+    content:'+تخفيض <@'+targetId+'> 2',author:{id:actorId,bot:false},reply:async data=>replies.push(data)};
+  await handle(message);
+  assert.match(replies[0].content,/Administrator/);
+  assert.equal(h.calls.length,0);
+  assert.equal(h.store.history().length,0);
+  const getContext = h.gateway.context;
+  h.gateway.context = async (...args)=>({...await getContext(...args), ownerId:actorId});
+  await handle(message);
+  const writes = h.calls.length;
+  await handle(message);
+  assert.equal(h.calls.length,writes);
+  assert.equal(h.store.history().length,1);
+  const row = h.store.byId('discord:'+message.id);
+  assert.equal(row.state,'done');
+  assert.equal(row.plan.direction,'demote');
+  assert.equal(row.plan.count,2);
+  assert.equal(row.plan.from,mod.ranks[1]);
+  assert.equal(row.plan.to,magistr);
+  assert.deepEqual(h.targetRoles,new Set([staff.variant,magistr,...staff.helpers,unrelated]));
+  assert.ok(!h.calls.some(([id,add])=>add && (id===mod.base || id===mod.variant)));
+  assert.match(replies[1].content,/تم تخفيض.*Magistr.*عدد الدرجات: \*\*2\*\*/);
+});
+
 test('multi-step promotion rejects overshooting the ceiling and a forbidden destination before any write',async t=>{
   const nearTop = harness(t,null,[ownership.base,ownership.ranks.at(-2),...ladder.at(-1).helpers]);
   await assert.rejects(nearTop.service.execute({...nearTop.request,count:2}),/الدرجات المتاحة لهذا العضو: 1/);

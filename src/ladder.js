@@ -35,28 +35,30 @@ function compareRoles(a, b) {
   return BigInt(a.id) < BigInt(b.id) ? -1 : 1;
 }
 
-function validatePromotionCount(count) {
+function validateRankChangeCount(count) {
   if (!Number.isSafeInteger(count) || count < 1 || count > ladder.length) {
-    throw new RuleError('عدد درجات الترقية لازم يكون عددًا صحيحًا من 1 إلى ' + ladder.length + '.');
+    throw new RuleError('عدد الدرجات لازم يكون عددًا صحيحًا من 1 إلى ' + ladder.length + '.');
   }
   return count;
 }
 
 function planPromotion(roleIds, direction = 'promote', count = 1) {
-  validatePromotionCount(count);
+  validateRankChangeCount(count);
   const held = new Set(roleIds);
   const currentRanks = ladder.filter(step => held.has(step.id) || (step.id === step.group.base && held.has(step.group.variant)));
   const previous = currentRanks.at(-1);
   const details = currentRanks.filter(step => step.id !== step.group.base);
   if (details.length > 1 || (details.length && previous !== details[0])) {
-    throw new RuleError('العضو يحمل درجات متعارضة. راجع رتبته الحالية في ديسكورد قبل الترقية.');
+    throw new RuleError('العضو يحمل درجات متعارضة. راجع رتبته الحالية في ديسكورد قبل تعديل درجته.');
   }
   const down = direction === 'demote';
-  if (down && count !== 1) throw new RuleError('أمر التخفيض يسمح بدرجة واحدة فقط.');
-  if (down && (!previous || previous.index === 0)) throw new RuleError('لا توجد درجة أدنى لهذا العضو في السلّم.');
   const currentIndex = previous?.index ?? -1;
-  const next = ladder[currentIndex + (down ? -1 : count)];
+  const next = ladder[currentIndex + (down ? -count : count)];
   if (!next) {
+    if (down) {
+      if (currentIndex <= 0) throw new RuleError('لا توجد درجة أدنى لهذا العضو في السلّم.');
+      throw new RuleError('العدد ينزل تحت أول درجة في السلّم. عدد الدرجات المتاحة لهذا العضو: ' + currentIndex + '.');
+    }
     const remaining = ladder.length - 1 - currentIndex;
     if (remaining === 0) throw new RuleError('وصل العضو إلى آخر درجة في سلّم الترقيات.');
     throw new RuleError('العدد يتجاوز آخر درجة في السلّم. عدد الدرجات المتاحة لهذا العضو: ' + remaining + '.');
@@ -66,17 +68,24 @@ function planPromotion(roleIds, direction = 'promote', count = 1) {
   const assigned = new Set([anchor, ...next.helpers]);
   if (next.id !== next.group.base) assigned.add(next.id);
   const add = [...assigned].filter(id => !held.has(id));
-  // Apply only the destination roles and cumulative helpers; never grant intermediate grades.
+  // Apply the final grade and reconcile helpers without granting intermediate grades.
   const remove = [...held].filter(id => !assigned.has(id) && (allRankIds.has(id) || (down && previous.helpers.includes(id))));
   return { from: previous?.id ?? null, to: next.id, group: next.group.id, anchor, add, remove, helpers: next.helpers, ...(down ? { direction } : {}), ...(count > 1 ? { count } : {}) };
+}
+
+function parseRankChangeArgs(parts, command) {
+  const [mention, rawCount, ...extra] = parts;
+  const match = /^<@!?(\d{17,20})>$/.exec(mention ?? '');
+  if (!match || extra.length || (rawCount !== undefined && !/^\d+$/.test(rawCount))) {
+    throw new RuleError('اكتب الأمر مع منشن عضو واحد وعدد اختياري، مثل ' + command + ' @العضو 2.');
+  }
+  return { target: match[1], count: validateRankChangeCount(Number(rawCount ?? '1')) };
 }
 
 function parsePromotion(content) {
   const text = content.trim();
   if (!/^\+ترقية(?:\s|$)/u.test(text)) return null;
-  const match = /^\+ترقية\s+<@!?(\d{17,20})>(?:\s+(\d+))?$/u.exec(text);
-  if (!match) throw new RuleError('اكتب الأمر مع منشن عضو واحد وعدد اختياري، مثل +ترقية @العضو 2.');
-  return { target: match[1], count: validatePromotionCount(Number(match[2] ?? '1')) };
+  return parseRankChangeArgs(text.split(/\s+/u).slice(1), '+ترقية');
 }
 
 function preview(id, variant = false) {
@@ -87,4 +96,4 @@ function preview(id, variant = false) {
   return planPromotion(held);
 }
 
-module.exports = { catalog, roles, ladder, steps, allHelpers, RuleError, compareRoles, planPromotion, parsePromotion, preview };
+module.exports = { catalog, roles, ladder, steps, allHelpers, RuleError, compareRoles, planPromotion, parsePromotion, parseRankChangeArgs, preview };

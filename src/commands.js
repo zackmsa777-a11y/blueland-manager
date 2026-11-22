@@ -1,7 +1,7 @@
 'use strict';
 
 const {Routes} = require('discord.js');
-const {catalog,roles,RuleError} = require('./ladder');
+const {catalog,roles,RuleError,parseRankChangeArgs} = require('./ladder');
 const {kinds,requestStates} = require('./community');
 const {activity}=require('../config/discord-features.json');
 const {withArabicAliases, commandName, subcommandName} = require('./command-aliases');
@@ -57,7 +57,7 @@ const chatAliases={
 };
 const helpText=[
   '**أوامر BlueLand Empire**',
-  'الطاقم · +ترقية @العضو لدرجة واحدة أو +ترقية @العضو 2 لدرجتين. +تخفيض @العضو، /promote، /dashboard',
+  'الطاقم · +ترقية @العضو أو +تخفيض @العضو لدرجة واحدة. أضف عدد الدرجات بعد المنشن، مثل +ترقية @العضو 2 أو +تخفيض @العضو 2. /promote، /dashboard',
   'المساعد · يقدر مالك السيرفر والمسؤول المخوّل يكلموا Hermes بالمنشن أو في الخاص.',
   'الإشراف · /warn، /warnings، /unwarn، /mute، /unmute، /timeout، /untimeout، /lock، /unlock، /kick، /ban، /unban',
   'الطلبات · /request submit للتقديم، /request status لمتابعة القرار',
@@ -74,7 +74,7 @@ function parseChat(text) {
   const [first,...parts]=text.slice(1).trim().split(/\s+/u);
   const action=Object.hasOwn(chatAliases,first) ? chatAliases[first] : Object.values(chatAliases).includes(first) ? first : null;
   if (!action) return null;
-  if (action === 'demote' && (parts.length !== 1 || !/^<@!?\d{17,20}>$/.test(parts[0]))) throw new RuleError('اكتب +تخفيض مع منشن عضو واحد.');
+  if (action==='demote') return {action,...parseRankChangeArgs(parts,'+تخفيض')};
   if (['ping','help','server','roles','top'].includes(action)) return {action};
   if (['lock','unlock'].includes(action)) return {action,reason:parts.join(' ')};
   if (action==='rank' && !parts.length) return {action};
@@ -98,11 +98,12 @@ function commandRunner({store,community,promotions,readyGuild,pair}) {
     if (action==='roles') return readyGuild().roles.cache.size+' رول في BlueLand، منها '+catalog.categories.reduce((sum,c)=>sum+c.ranks.length,0)+' درجة. الفئات بالترتيب:\n'+catalog.categories.map(c=>c.name).join(' ← ');
     if (action==='dashboard') return pair(actor);
     if (action==='promote' || action==='demote') {
-      const entry=await promotions.execute({id:delivery,actor,target:input.target,source:'discord',direction:action});
+      const entry=await promotions.execute({id:delivery,actor,target:input.target,source:'discord',direction:action,count:input.count});
       const next = roles.get(entry.plan.to).label;
       if (action === 'demote') {
         const previous = roles.get(entry.plan.from)?.label || 'خارج السلّم';
-        return 'تم تخفيض <@' + input.target + '> من **' + previous + '** إلى **' + next + '**.';
+        const total = entry.plan.count > 1 ? ' (عدد الدرجات: **' + entry.plan.count + '**)' : '';
+        return 'تم تخفيض <@' + input.target + '> من **' + previous + '** إلى **' + next + '**' + total + '.';
       }
       return 'تمت ترقية <@' + input.target + '> إلى **' + next + '**.';
     }

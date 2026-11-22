@@ -27,6 +27,42 @@ test('all demotion steps preserve unrelated roles and remove lost category helpe
     assert.deepEqual(p.helpers,ladder[i-1].helpers);
     for(const helper of step.helpers) assert.equal(p.remove.includes(helper),!p.helpers.includes(helper));
   }
-  assert.equal(parseChat('+تخفيض <@'+actor+'>').action,'demote');
-  assert.throws(()=>parseChat('+تخفيض <@'+actor+'> everything'));
+});
+
+test('demotion accepts one member and an optional positive whole number',()=>{
+  const target='1216830648480960552';
+  const mention='<@'+target+'>';
+  assert.deepEqual(parseChat('+تخفيض '+mention),{action:'demote',target,count:1});
+  assert.deepEqual(parseChat('+تخفيض '+mention+' 2'),{action:'demote',target,count:2});
+  assert.deepEqual(parseChat('+demote <@!'+target+'> 3'),{action:'demote',target,count:3});
+  for (const suffix of ['0','-2','1.5','2e1','2 3','everything','<@'+actor+'>',String(ladder.length+1)]) {
+    assert.throws(()=>parseChat('+تخفيض '+mention+' '+suffix));
+  }
+  assert.throws(()=>parseChat('+تخفيض @everyone 2'),/منشن عضو واحد/);
+  assert.throws(()=>parseChat('+تخفيض <@&'+target+'> 2'),/منشن عضو واحد/);
+});
+
+test('numbered demotions land directly on all valid lower grades and preserve variant and unrelated roles',()=>{
+  const unrelated='12345';
+  for (const [i,step] of ladder.entries()) {
+    const held = new Set([step.group.variant,...step.helpers,unrelated]);
+    if (step.id !== step.group.base) held.add(step.id);
+    for (let count=2;count<=i;count++) {
+      const destination = ladder[i-count];
+      const plan = planPromotion(held,'demote',count);
+      assert.equal(plan.to,destination.id);
+      assert.equal(plan.direction,'demote');
+      assert.equal(plan.count,count);
+      const actual = new Set([...held,...plan.add].filter(id=>!plan.remove.includes(id)));
+      const expected = new Set([destination.group.variant,...destination.helpers,unrelated]);
+      if (destination.id!==destination.group.base) expected.add(destination.id);
+      assert.deepEqual(actual,expected);
+    }
+  }
+});
+
+test('demotion cannot drop a member below the first grade or demote an unranked member',()=>{
+  assert.throws(()=>planPromotion([],'demote',2),/لا توجد درجة أدنى/);
+  assert.throws(()=>planPromotion([ladder[0].id],'demote',2),/لا توجد درجة أدنى/);
+  assert.throws(()=>planPromotion([ladder[1].id],'demote',2),/الدرجات المتاحة لهذا العضو: 1/);
 });
