@@ -1,5 +1,6 @@
 name: blueland-release
-version: "1.0.0"
-description: Inspect and publish the reviewed main branch of BlueLand Manager.
+version: "1.1.0"
+description: Edit BlueLand games and publish a reviewed revision from Discord.
 provides_tools:
   - blueland_release
+  - blueland_game_code
