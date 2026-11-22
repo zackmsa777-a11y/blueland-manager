@@ -1,6 +1,6 @@
 name: blueland-release
-version: "1.1.0"
-description: Edit BlueLand games and publish a reviewed revision from Discord.
+version: "1.2.0"
+description: Edit BlueLand bot code and Discord commands, review changes and publish a confirmed revision.
 provides_tools:
   - blueland_release
-  - blueland_game_code
+  - blueland_bot_code

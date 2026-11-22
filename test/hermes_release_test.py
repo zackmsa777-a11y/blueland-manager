@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import sys
 import unittest
 from unittest.mock import patch
 from types import SimpleNamespace
@@ -11,6 +12,7 @@ from types import SimpleNamespace
 path = Path(__file__).resolve().parents[1] / "deploy/hermes-release/__init__.py"
 spec = importlib.util.spec_from_file_location("release_plugin",path)
 plugin = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = plugin
 spec.loader.exec_module(plugin)
 
 
@@ -67,9 +69,39 @@ class ReleaseTest(unittest.TestCase):
             self.assertNotIn("confirm",plugin.preview("101","22","discord"))
             start.assert_not_called()
 
+    def test_new_module_and_deletion_follow_the_room_draft(self):
+        root = Path(self.tmp.name)
+        live = root/self.base
+        (live/"src").mkdir(parents=True)
+        (live/"src/commands.js").write_text("old\n")
+        (live/"package.json").write_text("{}")
+        new = "src/commands/hello.js"
+        def call(action,**args):
+            return plugin.bot_code(dict(action=action,**args),"101","22","discord")
+        with patch.object(plugin,"ROOT",root),patch.object(plugin,"status",return_value=self.state):
+            self.assertIn("src/commands.js",call("list")["files"])
+            self.assertEqual(call("read",path="package.json")["content"],"{}")
+            with self.assertRaises(ValueError): call("create",path="package.json",content="{}")
+            with self.assertRaises(ValueError): call("create",path="src/commands.js",content="new")
+            for path in ("../auth.json","src/../deploy/hooks.js","src/.git/hooks.js","src/node_modules/x.js",
+                         "src//file.js","/src/a.js","src/a\\b.js","deploy/hermes-release/__init__.py"):
+                with self.assertRaises(ValueError): call("create",path=path,content="x")
+            saved = call("create",path=new,content="one\ntwo\n")
+            self.assertIn(new,call("list")["files"])
+            self.assertEqual(call("read",path=new,start_line=2,line_count=1)["content"],"two\n")
+            with self.assertRaises(ValueError): call("delete",path=new,sha256="stale")
+            call("delete",path=new,sha256=saved["sha256"])
+            self.assertNotIn(new,call("list")["modified"])
+            seen = call("read",path="src/commands.js")
+            call("delete",path=seen["path"],sha256=seen["sha256"])
+            self.assertNotIn(seen["path"],call("list")["files"])
+            self.assertEqual((live/seen["path"]).read_text(),"old\n")
+            call("create",path=seen["path"],content="old\n")
+            self.assertEqual(call("list")["modified"],[])
+
     def test_room_edits_review_and_native_confirmation(self):
         root = Path(self.tmp.name)
-        name = "src/game-view.js"
+        name = "src/commands.js"
         for sha, content in [(self.base,"old line"),(self.head,"new line")]:
             file = root/sha/name
             file.parent.mkdir(parents=True)
@@ -84,7 +116,7 @@ class ReleaseTest(unittest.TestCase):
             self.assertEqual(args["head"],self.head)
             return {"page":1,"pages":1,"patch":"-old line\n+new line"} if action=="diff" else {"head":self.head}
         def edit(params, actor="101", room="22"):
-            return plugin.game_code(params,actor,room,"discord")
+            return plugin.bot_code(params,actor,room,"discord")
         with patch.object(plugin,"ROOT",root), patch.object(plugin,"status",side_effect=lambda:self.state.copy()), \
              patch.object(plugin,"github",return_value={"sha":self.base}), patch.object(plugin,"publisher",side_effect=worker), \
              patch.object(plugin,"can_publish",return_value=True), patch.object(plugin.subprocess,"run") as start:

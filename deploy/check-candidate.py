@@ -40,10 +40,17 @@ def check(request):
         (root/"node_modules").symlink_to((dependencies/"node_modules").resolve(),target_is_directory=True)
         env={"PATH":"/usr/local/bin:/usr/bin:/bin","HOME":temp,"LANG":"C.UTF-8"}
         with tempfile.TemporaryFile() as log:
-            for file in sorted((root/"src").rglob("*.js")):
-                if subprocess.run([NODE,"--check",str(file)],cwd=root,env=env,stdin=subprocess.DEVNULL,
-                                  stdout=log,stderr=log,timeout=10).returncode:
-                    return {"ok":False,"detail":"فشل فحص JavaScript في "+str(file.relative_to(root))}
+            for folder in ("src","scripts","public","config","test"):
+                for file in sorted((root/folder).rglob("*")):
+                    if file.suffix == ".json" and file.is_file():
+                        try:
+                            json.loads(file.read_text(encoding="utf-8"))
+                        except ValueError:
+                            return {"ok":False,"detail":"فشل فحص JSON في "+str(file.relative_to(root))}
+                    if file.suffix in {".js",".cjs",".mjs"} and file.is_file():
+                        if subprocess.run([NODE,"--check",str(file)],cwd=root,env=env,stdin=subprocess.DEVNULL,
+                                          stdout=log,stderr=log,timeout=10).returncode:
+                            return {"ok":False,"detail":"فشل فحص JavaScript في "+str(file.relative_to(root))}
             result=subprocess.run([NODE,"--test"],cwd=root,stdin=subprocess.DEVNULL,stdout=log,stderr=log,env=env,timeout=65)
             log.seek(0,os.SEEK_END)
             log.seek(max(0,log.tell()-4000))

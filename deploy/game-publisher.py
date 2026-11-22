@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""Build immutable game revisions and promote a reviewed revision through the offline checker."""
+"""Build immutable application revisions and promote a reviewed revision through the offline checker."""
 import fcntl
 import json
 import os
@@ -13,10 +13,11 @@ import tempfile
 # Installed beside this file. Do not import from the candidate.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from check_client import test_revision
+sys.path.insert(0, str(Path(__file__).resolve().parent / "hermes-release"))
+from source_files import MAX_BYTES, editable
 
 MIRROR = Path("/var/lib/blueland-publish/refs.git")
 REMOTE = "git@github.com:zackmsa777-a11y/blueland-manager.git"
-FILES = {"src/game-rules.js", "src/game-view.js", "src/game-card.js", "src/discord-games.js", "test/games.test.js"}
 SHA = re.compile(r"[0-9a-f]{40}")
 
 
@@ -33,10 +34,11 @@ def handle(request):
     ref = "refs/blueland/games/" + room
     if action == "prepare":
         files = request["files"]
-        if not files or not files.keys() <= FILES or any(
-            not isinstance(v, str) or not 0 < len(v.encode()) <= 120000 or "\x00" in v for v in files.values()
-        ):
-            raise ValueError("التعديل خارج ملفات الألعاب المدعومة أو أكبر من حد الملف.")
+        if not isinstance(files,dict) or not files or not all(editable(path) for path in files):
+            raise ValueError("التعديل خارج مجلدات كود التطبيق.")
+        if any(v is not None and (not isinstance(v,str) or len(v.encode()) > MAX_BYTES or "\x00" in v)
+               for v in files.values()):
+            raise ValueError("حجم الملف أو محتواه غير صالح.")
         git("fetch", "--quiet", "--no-tags", REMOTE, "refs/heads/main")
         if git("rev-parse", "FETCH_HEAD").strip() != base:
             raise ValueError("تغيّر main. حدّث النسخة الشغالة وراجع التعديل عليها.")
@@ -44,13 +46,23 @@ def handle(request):
             env = dict(os.environ, GIT_INDEX_FILE=str(Path(temp) / "index"))
             git("read-tree", base, env=env)
             for path, content in files.items():
+                entry = git("ls-tree", "-z", base, "--", path)
+                mode = entry.partition(" ")[0] if entry else "100644"
+                if mode not in ("100644", "100755"):
+                    raise ValueError("التعديل متاح للملفات العادية داخل مجلدات التطبيق.")
+                if content is None:
+                    git("update-index", "--index-info", data="0 " + "0" * 40 + "\t" + path + "\n", env=env)
+                    continue
                 blob = git("hash-object", "-w", "--stdin", data=content).strip()
-                git("update-index", "--cacheinfo", "100644," + blob + "," + path, env=env)
+                git("update-index", "--add", "--cacheinfo", mode + "," + blob + "," + path, env=env)
             tree = git("write-tree", env=env).strip()
         if tree == git("rev-parse", base + "^{tree}").strip():
             raise ValueError("التعديلات مطابقة للإصدار الشغّال.")
+        changed = set(git("diff", "--no-renames", "--name-only", "-z", base, tree, "--").rstrip("\0").split("\0"))
+        if changed != set(files):
+            raise ValueError("تعارضت مسارات الملفات. راجع قائمة التعديلات قبل النشر.")
         head = git("-c", "user.name=BlueLand Manager", "-c", "user.email=blueland@localhost",
-                   "commit-tree", tree, "-p", base, "-m", "Update reviewed BlueLand game code").strip()
+                   "commit-tree", tree, "-p", base, "-m", "Update reviewed BlueLand bot code").strip()
         git("update-ref", ref, head)
         return {"head": head, "files": sorted(files)}
 

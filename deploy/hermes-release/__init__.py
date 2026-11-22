@@ -10,12 +10,12 @@ import subprocess
 import time
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+from .source_files import MAX_BYTES, REFERENCES, editable, list_sources, read_source
 
 ROOT = Path("/var/lib/blueland-releases")
 REPO = "zackmsa777-a11y/blueland-manager"
 WEB = "https://github.com/" + REPO
 SHA = re.compile(r"[0-9a-f]{40}")
-GAME_FILES = {"src/discord-games.js", "src/game-rules.js", "src/game-view.js", "src/game-card.js", "test/games.test.js"}
 PHASES = {"checking":"فحص", "testing":"اختبار", "activating":"تفعيل", "live":"منشور",
           "current":"محدّث", "failed":"فشل", "rolled_back":"تراجع", "rollback_failed":"تعذّر التراجع"}
 
@@ -64,10 +64,13 @@ def operator(platform, actor, room):
 
 
 def publisher(action, room, base, **payload):
+    body = json.dumps(dict(action=action, room=room, base=base, **payload), ensure_ascii=False).encode() + b"\n"
+    if len(body) >= 4_000_000:
+        raise ValueError("حجم التعديل كبير. قسّمه إلى إصدارين.")
     with socket.socket(socket.AF_UNIX) as conn:
         conn.settimeout(210)
         conn.connect("/run/blueland-games.sock")
-        conn.sendall(json.dumps(dict(action=action, room=room, base=base, **payload), ensure_ascii=False).encode() + b"\n")
+        conn.sendall(body)
         with conn.makefile("rb") as stream:
             result = json.loads(stream.readline(32000))
     if "error" in result:
@@ -83,53 +86,77 @@ def invalidate(db, room):
 def draft_files(db, room, live):
     draft = {}
     for path, base, content in db.execute("SELECT path,base,content FROM game_files WHERE room=?", (room,)):
-        if path not in GAME_FILES or not SHA.fullmatch(base):
-            raise ValueError("تعذّر قراءة تعديل اللعبة.")
+        if not editable(path) or not SHA.fullmatch(base):
+            raise ValueError("تعذّر قراءة تعديل الملف.")
         if base != live:
-            current = (ROOT/live/path).read_text(encoding="utf-8")
+            current = read_source(ROOT/live,path)
             if content == current:
                 db.execute("DELETE FROM game_files WHERE room=? AND path=?", (room,path))
                 continue
-            if current != (ROOT/base/path).read_text(encoding="utf-8"):
+            if current != read_source(ROOT/base,path):
                 raise ValueError(f"تغيّر {path} في إصدار آخر. استخدم /release diff إن كانت له مراجعة، أو /release discard لإلغاء مسودة هذه المحادثة.")
             db.execute("UPDATE game_files SET base=? WHERE room=? AND path=?", (live,room,path))
         draft[path] = content
     return draft
 
 
-def game_code(params, actor, room, platform):
+def bot_code(params, actor, room, platform):
     operator(platform, actor, room)
     action = params["action"]
-    if action == "list":
-        return {"files": sorted(GAME_FILES)}
-    path = params["path"]
-    if path not in GAME_FILES:
-        raise ValueError("اختر ملفًا من قائمة ملفات الألعاب.")
     live = status()["live"]
     db = reviews()
     try:
         with db:
             db.execute("BEGIN IMMEDIATE")
             files = draft_files(db,room,live)
-            original = (ROOT/live/path).read_text(encoding="utf-8")
+            if action == "list":
+                paths = list_sources(ROOT/live)
+                paths.update(path for path,value in files.items() if value is not None)
+                paths.difference_update(path for path,value in files.items() if value is None)
+                return {"files":sorted(paths), "modified":sorted(files), "reference_files":list(REFERENCES)}
+            path = params["path"]
+            if not editable(path) and not (action == "read" and path in REFERENCES):
+                raise ValueError("اختر مسارًا داخل مجلدات كود التطبيق.")
+            original = read_source(ROOT/live,path)
             content = files.get(path,original)
-            digest = hashlib.sha256(content.encode()).hexdigest()
-            if action == "read":
-                return {"base": live, "sha256": digest, "path": path, "content": content}
-            if action != "replace" or params.get("sha256") != digest:
-                raise ValueError("اقرأ أحدث محتوى للملف ثم عدّل النسخة المقروءة.")
-            old, new = params["old"], params["new"]
-            if not old or old == new or content.count(old) != 1:
-                raise ValueError("حدّد مقطعًا واحدًا مطابقًا ومختلفًا عن النص البديل.")
-            updated = content.replace(old,new,1)
-            if not 0 < len(updated.encode()) <= 120000 or "\x00" in updated:
+            if action == "create":
+                if content is not None:
+                    raise ValueError("الملف موجود. اقرأه ثم استخدم replace.")
+                updated = params["content"]
+            else:
+                if content is None:
+                    raise ValueError("الملف غير موجود. استخدم create لإنشائه.")
+                digest = hashlib.sha256(content.encode()).hexdigest()
+                if action == "read":
+                    lines = content.splitlines(keepends=True)
+                    start = params.get("start_line",1)
+                    count = params.get("line_count",len(lines) or 1)
+                    if not 1 <= start <= max(1,len(lines)) or count < 1:
+                        raise ValueError("نطاق الأسطر غير صالح.")
+                    return {"base":live, "sha256":digest, "path":path, "total_lines":len(lines),
+                            "content":"".join(lines[start-1:start-1+count])}
+                if params.get("sha256") != digest:
+                    raise ValueError("اقرأ أحدث محتوى للملف ثم عدّل النسخة المقروءة.")
+                if action == "write":
+                    updated = params["content"]
+                elif action == "delete":
+                    updated = None
+                elif action == "replace":
+                    old, new = params["old"], params["new"]
+                    if not old or old == new or content.count(old) != 1:
+                        raise ValueError("حدّد مقطعًا واحدًا مطابقًا ومختلفًا عن النص البديل.")
+                    updated = content.replace(old,new,1)
+                else:
+                    raise ValueError("عملية تحرير غير معروفة.")
+            if action != "delete" and (not isinstance(updated,str) or len(updated.encode()) > MAX_BYTES or "\x00" in updated):
                 raise ValueError("حجم الملف أو محتواه غير صالح.")
             if updated == original:
                 db.execute("DELETE FROM game_files WHERE room=? AND path=?", (room,path))
             else:
                 db.execute("INSERT OR REPLACE INTO game_files VALUES(?,?,?,?)",(room,path,live,updated))
             invalidate(db,room)
-            return {"edited": path, "sha256": hashlib.sha256(updated.encode()).hexdigest(), "saved": True}
+            return {"edited":path, "sha256":hashlib.sha256(updated.encode()).hexdigest() if updated is not None else None,
+                    "saved":True}
     finally:
         db.close()
 
@@ -149,12 +176,12 @@ def preview(actor, room, platform):
             if files and head == data["live"]:
                 candidate = publisher("prepare",room,head,files=files)
                 head = candidate["head"]
-                data["game_files"] = candidate["files"]
+                data["changed_files"] = candidate["files"]
                 data["diff_command"] = "/release diff 1"
                 data["first_page"] = publisher("diff",room,data["live"],head=head,page=1)
             invalidate(db,room)
             if data["live"] != head:
-                if "game_files" in data:
+                if "changed_files" in data:
                     db.execute("INSERT INTO game_reviews VALUES(?,?)",(room,head))
                 else:
                     data["changes"] = f"{WEB}/compare/{data['live']}...{head}"
@@ -210,7 +237,7 @@ def confirm(actor, room, platform, prefix):
             db.execute("DELETE FROM reviews WHERE room=? AND head=?",(room,head))
             db.execute("DELETE FROM game_reviews WHERE room=? AND head=?",(room,head))
             for path, content in db.execute("SELECT path,content FROM game_files WHERE room=?", (room,)).fetchall():
-                if path in GAME_FILES and content == (ROOT/head/path).read_text(encoding="utf-8"):
+                if editable(path) and content == read_source(ROOT/head,path):
                     db.execute("DELETE FROM game_files WHERE room=? AND path=?", (room,path))
         return after
     finally:
@@ -225,13 +252,13 @@ def describe(data):
     if "included_in_live" in data:
         verdict = {True:"موجود",False:"غير موجود",None:"تعذّر التحقق منه"}
         text += f"\nالتحديث `{data['revision']}`: {verdict[data['included_in_live']]} في الإصدار الشغّال."
-    if "game_files" in data:
-        text += "\n" + "، ".join(data["game_files"]) + "\n" + format_diff(data["first_page"])
+    if "changed_files" in data:
+        text += "\n" + "، ".join(data["changed_files"]) + "\n" + format_diff(data["first_page"])
         text += f"\nللتأكيد: {data['confirm']}"
     elif "changes" in data:
         text += f"\n{data['changes']}\nللنشر بعد المراجعة: `{data['confirm']}`"
         if data.get("pending_files"):
-            text += "\nيوجد تعديل محفوظ للألعاب. راجعه بعد تفعيل main."
+            text += "\nيوجد تعديل محفوظ لكود البوت. راجعه بعد تفعيل main."
     elif data.get("main") == data["live"]:
         text += "\nآخر تحديث على main شغّال بالفعل."
     return text
@@ -242,10 +269,10 @@ def format_diff(data):
     return f"صفحة {data['page']}/{data['pages']} · /release diff رقم_الصفحة\n{fence}diff\n{data['patch']}\n{fence}"
 
 
-def game_tool(params, **kwargs):
+def code_tool(params, **kwargs):
     from gateway.session_context import get_session_env
     try:
-        data = game_code(params, get_session_env("HERMES_SESSION_USER_ID"),get_session_env("HERMES_SESSION_CHAT_ID"),
+        data = bot_code(params, get_session_env("HERMES_SESSION_USER_ID"),get_session_env("HERMES_SESSION_CHAT_ID"),
                          get_session_env("HERMES_SESSION_PLATFORM"))
         return json.dumps(data,ensure_ascii=False)
     except (OSError, KeyError, TypeError, ValueError, sqlite3.Error) as err:
@@ -281,11 +308,11 @@ def command(raw_args, *, source=None, platform=""):
                     with db:
                         db.execute("DELETE FROM game_files WHERE room=?", (room,))
                         invalidate(db,room)
-                    return "أُلغيت مسودة الألعاب في هذه المحادثة."
+                    return "أُلغيت تعديلات الكود المحفوظة في هذه المحادثة."
                 row = db.execute("SELECT r.base,r.head FROM reviews r JOIN game_reviews g USING(room,head) WHERE room=? AND expires>?",
                                  (room,int(time.time()))).fetchone()
                 if not row:
-                    raise ValueError("اعرض تعديلات الألعاب بأمر /release deploy أولًا.")
+                    raise ValueError("اعرض تعديلات البوت بأمر /release deploy أولًا.")
                 return format_diff(publisher("diff", room, row[0],head=row[1],page=int(args[1]) if len(args)==2 else 1))
             finally:
                 db.close()
@@ -299,12 +326,13 @@ def command(raw_args, *, source=None, platform=""):
 
 
 def register(ctx):
-    ctx.register_tool(name="blueland_game_code",toolset="blueland_release",handler=game_tool,schema={
-        "name":"blueland_game_code","description":"List, read and edit the actual BlueLand game source in this Discord room. Read returns content and sha256. Replace one exact unique old snippet with new text using that sha256. Edits persist until approved and deployed. Use blueland_release preview when asked to publish.",
-        "parameters":{"type":"object","properties":{"action":{"type":"string","enum":["list","read","replace"]},
-        "path":{"type":"string","enum":sorted(GAME_FILES)},"sha256":{"type":"string"},"old":{"type":"string"},"new":{"type":"string"}},"required":["action"]}})
+    ctx.register_tool(name="blueland_bot_code",toolset="blueland_release",handler=code_tool,schema={
+        "name":"blueland_bot_code","description":"Edit the bot application in the current Discord room: src, public, config, scripts and JS tests. List files, read optional line ranges, create a module with content, replace a unique old snippet with new text, write full content, or delete a file. Replace/write/delete require the latest file sha256. For new commands inspect src/commands.js for registration and dispatch. Edits persist across messages. Preview using blueland_release.",
+        "parameters":{"type":"object","properties":{"action":{"type":"string","enum":["list","read","create","replace","write","delete"]},
+        "path":{"type":"string"},"sha256":{"type":"string"},"old":{"type":"string"},"new":{"type":"string"},"content":{"type":"string"},
+        "start_line":{"type":"integer","minimum":1},"line_count":{"type":"integer","minimum":1}},"required":["action"]}})
     ctx.register_tool(name="blueland_release",toolset="blueland_release",handler=tool,schema={
-        "name":"blueland_release","description":"Read live VPS status, or preview the current room's saved game code edits or a newer main commit. For requests to change games, first use blueland_game_code to implement the change. Show changed files, diff and the exact human confirmation command returned by preview.",
+        "name":"blueland_release","description":"Read live VPS status or preview the current room's bot edits or a newer main commit. For feature and command requests, first implement them using blueland_bot_code. Show changed files, diff and the exact human confirmation command from preview.",
         "parameters":{"type":"object","properties":{"action":{"type":"string","enum":["status","preview"]},
                       "revision":{"type":"string","description":"Optional Git commit ID for status."}},"required":["action"]}})
     ctx.register_command("release",command,"عرض تعديلات البوت وتأكيد نشر النسخة المراجعة",args_hint="status [SHA] | deploy | diff [page] | confirm SHA | discard")

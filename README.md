@@ -8,9 +8,9 @@
 
 تستقبل خدمة BlueLand أوامر السيرفر المسجّلة والأوامر التي تبدأ بعلامة `+`. تعرض `/help` داخل السيرفر دليل الطاقم والأعضاء. يستخدم Hermes أوامره العامة وأدوات Discord والذاكرة، ويحفظ جلساته في مجلد الخدمة. يظل سجل الترقيات والطلبات والتذاكر في قاعدة BlueLand.
 
-يعرض `+vps release` أو `/release status` الإصدار الشغّال ونتيجة آخر محاولة من الـVPS. يقرأ Hermes ملفات الألعاب ويعدّلها داخل المحادثة. يعرض «انشر» أو `/release deploy` الملفات والفرق ومعرّف النسخة المقترحة. يعرض `/release diff 2` الصفحة الثانية من الفرق. يقدر أي من المسؤولين تأكيد النشر بأمر `/release confirm SHA` في نفس المحادثة خلال ٣٠ دقيقة. تُختبر النسخة قبل دمجها إلى main وتفعيلها، ويمكن إلغاء مسودة المحادثة بأمر `/release discard`.
+يعرض `+vps release` أو `/release status` الإصدار الشغّال ونتيجة آخر محاولة من الـVPS. يقرأ Hermes كود التطبيق وينشئ ملفات ويعدّلها أو يحذفها داخل المحادثة. يشمل ذلك معالجات أوامر ديسكورد وتسجيلها في السيرفر، والداشبورد والإعدادات والسكربتات واختبارات التطبيق. يعرض «انشر» أو `/release deploy` الملفات والفرق ومعرّف النسخة المقترحة. يعرض `/release diff 2` الصفحة الثانية من الفرق. يقدر أي من المسؤولين تأكيد النشر بأمر `/release confirm SHA` في نفس المحادثة خلال ٣٠ دقيقة. تُختبر النسخة قبل دمجها إلى main وتفعيلها، ويمكن إلغاء مسودة المحادثة بأمر `/release discard`.
 
-ثبّت `deploy/game-publisher.py` باسم `/usr/local/libexec/blueland-game-publisher.py` بجوار `check_client.py`، ثم ثبّت وحدتي `blueland-games.socket` و`blueland-games@.service` وفعّل المقبس. تستخدم الخدمة مستودع النشر المحلي ومفتاح النشر الخاص به وفحص النسخ المعزول.
+ثبّت `deploy/game-publisher.py` باسم `/usr/local/libexec/blueland-game-publisher.py` بجوار `check_client.py`، وثبّت `deploy/hermes-release/source_files.py` بجواره أيضًا، ثم ثبّت وحدتي `blueland-games.socket` و`blueland-games@.service` وفعّل المقبس. تستخدم الخدمة مستودع النشر المحلي ومفتاح النشر الخاص به وفحص النسخ المعزول.
 
 تُثبّت إضافة `deploy/hermes-release` باسم `blueland-release` في مجلد إضافات Hermes. استخدم وحدة `deploy/blueland-release.service` لكل من الاسم العادي والقالب `blueland-release@.service`، وثبّت قاعدة polkit المرفقة. يطابق القالب معرّف Git المؤكّد مع رأس main قبل تفعيل الإصدار.
 
