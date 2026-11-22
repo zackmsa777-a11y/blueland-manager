@@ -57,7 +57,7 @@ const chatAliases={
 };
 const helpText=[
   '**أوامر BlueLand Empire**',
-  'الطاقم · +ترقية @العضو، +تخفيض @العضو، /promote، /dashboard',
+  'الطاقم · +ترقية @العضو لدرجة واحدة أو +ترقية @العضو 2 لدرجتين. +تخفيض @العضو، /promote، /dashboard',
   'المساعد · يقدر مالك السيرفر والمسؤول المخوّل يكلموا Hermes بالمنشن أو في الخاص.',
   'الإشراف · /warn، /warnings، /unwarn، /mute، /unmute، /timeout، /untimeout، /lock، /unlock، /kick، /ban، /unban',
   'الطلبات · /request submit للتقديم، /request status لمتابعة القرار',

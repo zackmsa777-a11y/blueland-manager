@@ -110,7 +110,7 @@ function makeService(store, gateway, allowed = new Set()) {
   async function perform(request) {
     let entry = store.byId(request.id);
     if (entry && (entry.actor !== request.actor || entry.target !== request.target ||
-        (request.direction && request.direction !== (entry.plan.direction || 'promote')))) {
+        request.direction !== (entry.plan.direction ?? 'promote') || request.count !== (entry.plan.count ?? 1))) {
       throw new RuleError('معرّف العملية مستخدم لطلب آخر.', 409);
     }
     if (entry?.state === 'done') return entry;
@@ -118,7 +118,7 @@ function makeService(store, gateway, allowed = new Set()) {
     checkOperator(ctx, allowed);
     if (!entry) {
       if (store.pending(request.target)) throw new RuleError('توجد ترقية سابقة قيد الاستكمال لهذا العضو.', 409);
-      const plan = planPromotion(ctx.target.roles, request.direction);
+      const plan = planPromotion(ctx.target.roles, request.direction, request.count);
       if (Object.hasOwn(request, 'expectedFrom') && plan.from !== request.expectedFrom) {
         throw new RuleError('تغيّرت درجة العضو بعد المعاينة. اعرض الترقية من جديد.', 409);
       }
@@ -134,18 +134,20 @@ function makeService(store, gateway, allowed = new Set()) {
   }
 
   function execute(request) {
+    const direction = request.direction ?? 'promote';
+    const count = request.count ?? 1;
     const running = active.get(request.target);
     if (running) {
-      if (running.id === request.id && running.actor === request.actor) return running.promise;
+      if (running.id === request.id && running.actor === request.actor && running.direction === direction && running.count === count) return running.promise;
       return Promise.reject(new RuleError('يجري تنفيذ ترقية لهذا العضو. انتظر اكتمالها.', 409));
     }
-    const promise = perform(request).finally(() => active.delete(request.target));
-    active.set(request.target, { id: request.id, actor: request.actor, promise });
+    const promise = perform({ ...request, direction, count }).finally(() => active.delete(request.target));
+    active.set(request.target, { id: request.id, actor: request.actor, direction, count, promise });
     return promise;
   }
   async function recover() {
     for (const entry of store.unfinished()) {
-      try { await execute(entry); }
+      try { await execute({ ...entry, direction: entry.plan.direction, count: entry.plan.count }); }
       catch (err) { store.note(entry.id, err instanceof RuleError ? err.message : 'بانتظار استجابة ديسكورد.'); }
     }
   }

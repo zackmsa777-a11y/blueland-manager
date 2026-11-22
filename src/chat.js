@@ -30,8 +30,8 @@ function createMessageHandler({ authorize, service, store, publicOrigin, run, pa
         await reply('أرسلت لك رمز دخول اللوحة في الخاص.');
         return;
       }
-      const target = parsePromotion(text);
-      if (!target) {
+      const promotion = parsePromotion(text);
+      if (!promotion) {
         if (run) {
           const command=parse(text);
           if (command) {
@@ -45,10 +45,12 @@ function createMessageHandler({ authorize, service, store, publicOrigin, run, pa
         }
         return;
       }
-      const result = await service.execute({ id:'discord:' + message.id, actor:message.author.id, target, source:'discord' });
+      const { target, count } = promotion;
+      const result = await service.execute({ id:'discord:' + message.id, actor:message.author.id, target, count, source:'discord' });
       const old = roles.get(result.plan.from)?.label || 'خارج السلّم';
       const next = roles.get(result.plan.to).label;
-      await reply('تمت ترقية <@' + target + '> من **' + old + '** إلى **' + next + '**.');
+      const total = result.plan.count > 1 ? ' (عدد الدرجات: **' + result.plan.count + '**)' : '';
+      await reply('تمت ترقية <@' + target + '> من **' + old + '** إلى **' + next + '**' + total + '.');
     } catch (err) {
       const text = err instanceof RuleError ? err.message : 'تعذّر تأكيد العملية الآن. راجع سجلها في لوحة الطاقم قبل إعادة الأمر.';
       await reply(text).catch(() => {});

@@ -54,13 +54,74 @@ test('the published inventory matches the six server ranges and Discord tie orde
   assert.equal(roles.get(mod.helpers[0]).name,'timeout/untimeout');
 });
 
-test('the native chat prefix accepts exactly one Discord mention',() => {
-  assert.equal(parsePromotion('+ترقية <@'+targetId+'>'),targetId);
-  assert.equal(parsePromotion(' +ترقية   <@!'+targetId+'> '),targetId);
-  assert.equal(parsePromotion('ترقية <@'+targetId+'>'),null);
-  for (const text of ['+ترقية','+ترقية @everyone','+ترقية <@'+targetId+'> <@'+actorId+'>','+ترقية <@&'+actorId+'>']) {
+test('the native chat prefix accepts one Discord mention and an optional whole number',() => {
+  const mention = '<@'+targetId+'>';
+  assert.deepEqual(parsePromotion('+ترقية '+mention),{target:targetId,count:1});
+  assert.deepEqual(parsePromotion(' +ترقية   <@!'+targetId+'> '),{target:targetId,count:1});
+  assert.deepEqual(parsePromotion('+ترقية <@1216830648480960552> 2'),{target:'1216830648480960552',count:2});
+  assert.equal(parsePromotion('ترقية '+mention),null);
+  for (const text of ['+ترقية','+ترقية @everyone','+ترقية '+mention+' <@'+actorId+'>','+ترقية <@&'+actorId+'>']) {
     assert.throws(()=>parsePromotion(text),/منشن عضو واحد/);
   }
+  for (const count of ['0','-1','1.5','2e1','Infinity','2 3',String(ladder.length+1),'99999999999999999999']) {
+    assert.throws(()=>parsePromotion('+ترقية '+mention+' '+count));
+  }
+});
+
+test('numbered chat promotion crosses categories in one audited operation without granting intermediate ranks',async t=>{
+  const h = harness(t,null,[staff.variant,magistr,...staff.helpers,unrelated]);
+  const handle = createMessageHandler({service:h.service,store:h.store});
+  const replies = [];
+  const message = {id:'1574000000000000012',guildId:catalog.guildId,inGuild:()=>true,webhookId:null,
+    content:'+ترقية <@'+targetId+'> 2',author:{id:actorId,bot:false},reply:async data=>replies.push(data)};
+  const expected = mod.ranks[1];
+  await handle(message);
+  const writes = h.calls.length;
+  await handle(message);
+  assert.equal(h.calls.length,writes);
+  assert.equal(h.store.history().length,1);
+  const row = h.store.byId('discord:'+message.id);
+  assert.equal(row.state,'done');
+  assert.equal(row.plan.from,magistr);
+  assert.equal(row.plan.to,expected);
+  assert.equal(row.plan.count,2);
+  assert.deepEqual(new Set(h.targetRoles),new Set([mod.variant,expected,...staff.helpers,...mod.helpers,unrelated]));
+  assert.ok(!h.calls.some(([id,add])=>add && id===mod.base));
+  assert.equal(replies.length,2);
+  assert.ok(replies.every(reply=>reply.content.includes(roles.get(expected).label) && reply.content.includes('عدد الدرجات: **2**')));
+  await assert.rejects(h.service.execute({...h.request,id:row.id,count:3}),/مستخدم لطلب آخر/);
+});
+
+test('multi-step promotion rejects overshooting the ceiling and a forbidden destination before any write',async t=>{
+  const nearTop = harness(t,null,[ownership.base,ownership.ranks.at(-2),...ladder.at(-1).helpers]);
+  await assert.rejects(nearTop.service.execute({...nearTop.request,count:2}),/الدرجات المتاحة لهذا العضو: 1/);
+  assert.equal(nearTop.calls.length,0);
+  assert.equal(nearTop.store.history().length,0);
+  const blocked = harness(t);
+  blocked.liveRoles.get(mod.ranks[1]).managed = true;
+  await assert.rejects(blocked.service.execute({...blocked.request,count:2}),/مُدارًا/);
+  assert.equal(blocked.calls.length,0);
+  assert.equal(blocked.store.history().length,0);
+});
+
+test('recovery of a numbered promotion resumes its saved destination and count',async t=>{
+  const h = harness(t);
+  const change = h.gateway.change;
+  h.gateway.change = async (...args)=>{
+    if (h.calls.length===2) throw new Error('simulated disconnect');
+    return change(...args);
+  };
+  const request = {...h.request,count:2};
+  await assert.rejects(h.service.execute(request),/simulated disconnect/);
+  assert.equal(h.store.pending(targetId).plan.count,2);
+  h.gateway.change = change;
+  const resumed = makeService(h.store,h.gateway);
+  await resumed.recover();
+  const entry = await resumed.execute(request);
+  assert.equal(entry.state,'done');
+  assert.equal(entry.plan.to,mod.ranks[1]);
+  assert.equal(h.store.history().length,1);
+  assert.deepEqual(new Set(h.targetRoles),new Set([mod.base,mod.ranks[1],...staff.helpers,...mod.helpers,unrelated]));
 });
 
 test('Discord message delivery, replay and private dashboard pairing use the real message handler',async t=>{

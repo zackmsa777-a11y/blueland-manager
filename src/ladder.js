@@ -35,7 +35,15 @@ function compareRoles(a, b) {
   return BigInt(a.id) < BigInt(b.id) ? -1 : 1;
 }
 
-function planPromotion(roleIds, direction = 'promote') {
+function validatePromotionCount(count) {
+  if (!Number.isSafeInteger(count) || count < 1 || count > ladder.length) {
+    throw new RuleError('عدد درجات الترقية لازم يكون عددًا صحيحًا من 1 إلى ' + ladder.length + '.');
+  }
+  return count;
+}
+
+function planPromotion(roleIds, direction = 'promote', count = 1) {
+  validatePromotionCount(count);
   const held = new Set(roleIds);
   const currentRanks = ladder.filter(step => held.has(step.id) || (step.id === step.group.base && held.has(step.group.variant)));
   const previous = currentRanks.at(-1);
@@ -44,24 +52,31 @@ function planPromotion(roleIds, direction = 'promote') {
     throw new RuleError('العضو يحمل درجات متعارضة. راجع رتبته الحالية في ديسكورد قبل الترقية.');
   }
   const down = direction === 'demote';
+  if (down && count !== 1) throw new RuleError('أمر التخفيض يسمح بدرجة واحدة فقط.');
   if (down && (!previous || previous.index === 0)) throw new RuleError('لا توجد درجة أدنى لهذا العضو في السلّم.');
-  const next = ladder[(previous?.index ?? -1) + (down ? -1 : 1)];
-  if (!next) throw new RuleError('وصل العضو إلى آخر درجة في سلّم الترقيات.');
+  const currentIndex = previous?.index ?? -1;
+  const next = ladder[currentIndex + (down ? -1 : count)];
+  if (!next) {
+    const remaining = ladder.length - 1 - currentIndex;
+    if (remaining === 0) throw new RuleError('وصل العضو إلى آخر درجة في سلّم الترقيات.');
+    throw new RuleError('العدد يتجاوز آخر درجة في السلّم. عدد الدرجات المتاحة لهذا العضو: ' + remaining + '.');
+  }
   const variant = previous && held.has(previous.group.variant);
   const anchor = variant ? next.group.variant : next.group.base;
   const assigned = new Set([anchor, ...next.helpers]);
   if (next.id !== next.group.base) assigned.add(next.id);
   const add = [...assigned].filter(id => !held.has(id));
-  // Only known ladder roles are replaced. Permissions accumulate; unrelated roles stay intact.
+  // Apply only the destination roles and cumulative helpers; never grant intermediate grades.
   const remove = [...held].filter(id => !assigned.has(id) && (allRankIds.has(id) || (down && previous.helpers.includes(id))));
-  return { from: previous?.id ?? null, to: next.id, group: next.group.id, anchor, add, remove, helpers: next.helpers, ...(down ? { direction } : {}) };
+  return { from: previous?.id ?? null, to: next.id, group: next.group.id, anchor, add, remove, helpers: next.helpers, ...(down ? { direction } : {}), ...(count > 1 ? { count } : {}) };
 }
 
 function parsePromotion(content) {
-  if (!/^\+ترقية(?:\s|$)/u.test(content.trim())) return null;
-  const match = /^\+ترقية\s+<@!?(\d{17,20})>\s*$/u.exec(content.trim());
-  if (!match) throw new RuleError('اكتب الأمر مع منشن عضو واحد، مثل +ترقية @العضو.');
-  return match[1];
+  const text = content.trim();
+  if (!/^\+ترقية(?:\s|$)/u.test(text)) return null;
+  const match = /^\+ترقية\s+<@!?(\d{17,20})>(?:\s+(\d+))?$/u.exec(text);
+  if (!match) throw new RuleError('اكتب الأمر مع منشن عضو واحد وعدد اختياري، مثل +ترقية @العضو 2.');
+  return { target: match[1], count: validatePromotionCount(Number(match[2] ?? '1')) };
 }
 
 function preview(id, variant = false) {
