@@ -3,7 +3,7 @@
 const {PermissionFlagsBits:P}=require('discord.js');
 const {catalog,RuleError}=require('./ladder');
 const {requestCodex}=require('./codex-worker-client');
-const {applyAction,inspectActions,operations,destructive,featureName}=require('./codex-actions');
+const {applyAction,inspectActions,operations,destructive}=require('./codex-actions');
 const {commands,chatAliases}=require('./commands');
 const {runFeature}=require('./codex-feature');
 const vpsService=require('./codex-vps');
@@ -82,23 +82,32 @@ function createCodexHandler({store,isAdmin,ask=requestCodex,workspace=a=>request
       if (busy.has(actor)||busy.size>=4) throw new RuleError('هناك طلب Codex قيد التنفيذ. حاول بعد انتهائه.');
       busy.add(actor); acquired=true;
       const input=text.replace(mention,'').trim();
-      if (publishDraft) {
-        const draft=await workspace({op:'feature_snapshot'});
-        if (draft.blocked?.length) throw new RuleError('تحتاج الملفات التالية مراجعة كود قبل النشر. استخدم +vps patch لعرضها:\n'+draft.blocked.join('\n').slice(0,1400));
-        if (draft.error) throw new RuleError('تعذّرت قراءة مسودة المزايا.');
-        let manifest;
-        try {manifest=JSON.parse(draft.content);} catch {throw new RuleError('ملف المزايا يحتوي على JSON غير صالح.');}
-        for (const [cmd,spec] of Object.entries(manifest?.commands||{})) {
-          if (cmd!==featureName(cmd)) throw new RuleError('اسم أمر غير صالح.');
-          if (spec?.source) await runFeature(spec.source,{},true);
+      const reviewConfirmation=previous?.content?.startsWith('مراجعة نشر BlueLand · ') && /^(?:تأكيد|confirm)$/iu.test(input);
+      if (publishDraft || reviewConfirmation) {
+        const who={actor,channel,message:message.id};
+        let request;
+        if (publishDraft) {
+          const draft=await workspace({op:'release_patch'});
+          if (draft.error) throw new RuleError(draft.text);
+          if (!draft.text) {await reply('نسخة التطوير خالية من التعديلات.');store.finish(message.id,'done');return true;}
+          request={...who,op:'preview',base:draft.base,patch:draft.text};
+        } else {
+          request={...who,op:'confirm',preview:previous.id};
         }
-        if (!await isAdmin(actor)) throw new RuleError('تغيّرت صلاحيتك قبل النشر.');
-        const merged=await publish({actor,channel,message:message.id,original:draft.original,content:draft.content});
-        if (merged.error) throw new RuleError(merged.error);
-        const synced=await workspace({op:'feature_merged',revision:merged.revision}).catch(()=>null);
-        await vps.deploy();
-        await reply('إصدار المسودة على GitHub: '+merged.revision.slice(0,8)+'\nبدأ فحص الإصدار للنشر. تابع +vps release.'+
-          (synced?.synced?'':'\nتحتاج نسخة التطوير إلى مزامنة.'));
+        let result=await publish(request);
+        if (publishDraft && result.head) {
+          const sync=await workspace({op:'release_refresh',revision:result.head});
+          if (sync.error) throw new RuleError(sync.text);
+          const current=await workspace({op:'release_patch'});
+          if (current.error||!current.text) throw new RuleError(current.text||'لم تعد هناك تعديلات للمعاينة.');
+          result=await publish({...who,op:'preview',base:current.base,patch:current.text});
+          if (result.head) throw new RuleError('تغيّر main من جديد. أعد طلب المعاينة.');
+        }
+        if (result.error) throw new RuleError(result.error);
+        if (result.revision) {
+          await workspace({op:'release_synced',revision:result.revision}).catch(()=>{});
+          if (!result.notified) await reply('اجتازت النسخة '+result.revision.slice(0,12)+' الاختبارات ودُمجت. تابع حالة تشغيلها بأمر +vps release.');
+        }
         store.finish(message.id,'done');return true;
       }
       if (name==='memory') {

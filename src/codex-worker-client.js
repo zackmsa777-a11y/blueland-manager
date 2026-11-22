@@ -12,7 +12,7 @@ function requestCodex(input,path=process.env.CODEX_SOCKET || '/run/blueland-code
     socket.once('connect',()=>socket.write(JSON.stringify(input)+'\n'));
     socket.on('data',data=>{
       output+=data;
-      if (Buffer.byteLength(output)>65000) socket.destroy(new Error('too large'));
+      if (Buffer.byteLength(output)>(input.op==='release_patch'?550000:65000)) socket.destroy(new Error('too large'));
     });
     socket.once('error',()=>reject(new RuleError('تعذّر الاتصال بخدمة Codex. جرّب بعد قليل.',503)));
     socket.once('end',()=>{

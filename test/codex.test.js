@@ -95,19 +95,21 @@ test('deploy requires an authorized command or a confirmed natural-language requ
   await handle(confirm);await handle(confirm);assert.equal(starts,2);
 });
 
-test('only an explicit human publish message submits the feature draft and starts a release',async t=>{
-  const h=fixture(t),calls=[];
-  const candidate=JSON.stringify(require('../config/discord-features.json'));
-  const handle=createCodexHandler({store:h.db.codex,isAdmin:async id=>id===actor,
-    workspace:async a=>{calls.push(a.op);return a.op==='feature_snapshot'?{content:candidate,original:'old'}:{synced:true};},
-    publish:async p=>{assert.equal(p.actor,actor);assert.equal(p.channel,channel);assert.equal(p.content,candidate);
-      calls.push('publish');return {revision:'1'.repeat(40)};},
-    vps:{deploy:async()=>calls.push('deploy')}});
-  await handle(h.message('انشر',{author:{id:'another-admin'}}));
-  assert.deepEqual(calls,[]);
-  const user=h.message('<@'+bot+'> انشر');
-  await handle(user);await handle(user);
-  assert.deepEqual(calls,['feature_snapshot','publish','feature_merged','deploy']);
+test('publishing previews app code and confirmation may come from the other authorized account',async t=>{
+  const h=fixture(t),requests=[],owner='300000000000000001';
+  const handle=createCodexHandler({store:h.db.codex,isAdmin:async id=>[actor,owner].includes(id),
+    workspace:async a=>a.op==='release_patch'?{text:'diff --git a/src/chat.js b/src/chat.js',base:'base'}:{synced:true},
+    publish:async req=>{requests.push(req);return req.op==='preview'?{preview:'review'}:{revision:'a'.repeat(40)};}});
+  await handle(h.message('انشر',{author:{id:'some-other-admin'}}));
+  assert.equal(requests.length,0);
+  const trigger=h.message('<@'+bot+'> انشر');
+  await handle(trigger);await handle(trigger);
+  assert.equal(requests.length,1);assert.equal(requests[0].op,'preview');assert.match(requests[0].patch,/src\/chat\.js/);
+  const parent={id:'review',content:'مراجعة نشر BlueLand · 123',author:{id:bot},guildId:catalog.guildId,channelId:channel};
+  const extras={author:{id:owner},reference:{channelId:channel,messageId:parent.id},fetchReference:async()=>parent};
+  await handle(h.message('تأكيد',extras));
+  assert.equal(requests[1].actor,owner);assert.equal(requests[1].op,'confirm');assert.equal(requests[1].preview,parent.id);
+  assert.equal(requests[1].patch,undefined);
 });
 
 test('channel context is excluded when planning actions, and its cursor advances',async t=>{

@@ -1,0 +1,24 @@
+[Service]
+DynamicUser=yes
+ExecStart=/usr/bin/python3 -I /usr/local/libexec/blueland-check.py
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+PrivateNetwork=yes
+PrivateDevices=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectProc=invisible
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+CapabilityBoundingSet=
+TemporaryFileSystem=/run
+InaccessiblePaths=-/etc/blueland -/etc/blueland-publish -/etc/blueland-cloudflare -/var/lib/blueland -/var/lib/blueland-workspace
+RuntimeMaxSec=110
+TasksMax=128
+LimitFSIZE=48M
+MemoryMax=768M
+UMask=0077

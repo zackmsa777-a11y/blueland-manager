@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """File operations and known development commands in the offline BlueLand project copy."""
 import fcntl
-import hashlib
 import json
 import os
 import pathlib
@@ -27,43 +26,32 @@ def filename(name):
 
 def perform(item):
     op = item["op"]
-    if op in {"feature_snapshot","feature_merged"}:
-        feature = "config/discord-features.json"
-        git = ["/usr/bin/git","-c","core.hooksPath=/dev/null","-c","core.fsmonitor=false"]
-        state = ROOT/".git"/"blueland-feature-base"
-        head = subprocess.check_output(git+["rev-parse","HEAD"],text=True).strip()
-        if op=="feature_snapshot":
-            changed = subprocess.check_output(git+["diff","--name-only","-z","HEAD"])
-            untracked = subprocess.check_output(git+["ls-files","--others","--exclude-standard","-z"])
-            names = (set(os.fsdecode(changed+untracked).split("\0")) - {"",feature})
-            if names:
-                return {"blocked":sorted(names)[:12]}
-            path = filename(feature)
-            if path.stat().st_size>22000:
-                raise ValueError("Feature file too large")
-            original = hashlib.sha256(subprocess.check_output(git+["show","HEAD:"+feature])).hexdigest()
-            if state.exists():
-                memo=json.loads(state.read_text())
-                if memo["head"]==head: original=memo["original"]
-            return {"original":original,"content":path.read_bytes().decode("utf-8")}
-        revision=item["revision"]
-        if not re.fullmatch(r"[a-f0-9]{40}",revision): raise ValueError("Invalid revision")
-        mirror="/var/lib/blueland-publish/refs.git"
-        env=dict(os.environ,GIT_CONFIG_COUNT="1",GIT_CONFIG_KEY_0="safe.directory",GIT_CONFIG_VALUE_0=mirror)
-        subprocess.run(git+["fetch","--quiet","--no-tags",mirror,"refs/heads/main"],check=True,env=env)
-        subprocess.run(git+["merge-base","--is-ancestor",revision,"FETCH_HEAD"],check=True)
-        subprocess.run(git+["merge-base","--is-ancestor",head,revision],check=True)
-        paths=subprocess.check_output(git+["diff","--name-only",head,revision],text=True).splitlines()
-        if set(paths)<={feature}:
-            subprocess.run(git+["reset","--quiet","--mixed",revision],check=True)
-            state.unlink(missing_ok=True)
-        else:
-            blob=subprocess.check_output(git+["show",revision+":"+feature])
-            state.write_text(json.dumps({"head":head,"original":hashlib.sha256(blob).hexdigest()}))
-        return {"synced":True}
-    if op == "patch":
+    if op in {"release_patch","release_synced","release_refresh"}:
+        # If the bot restarted during activation, advance the baseline without touching later edits.
+        wanted=pathlib.Path("/var/lib/blueland-publish/wanted")
+        rev=item.get("revision") if op!="release_patch" else (wanted.read_text().strip() if wanted.is_file() else None)
+        if rev and re.fullmatch(r"[0-9a-f]{40}",rev):
+            mirror="/var/lib/blueland-publish/refs.git"
+            git=["/usr/bin/git","-c","core.hooksPath=/dev/null","-c","core.fsmonitor=false"]
+            env=dict(os.environ,GIT_CONFIG_COUNT="1",GIT_CONFIG_KEY_0="safe.directory",GIT_CONFIG_VALUE_0=mirror)
+            head=subprocess.check_output(git+["rev-parse","HEAD"],text=True).strip()
+            if head!=rev:
+                subprocess.run(git+["fetch","--quiet","--no-tags",mirror,"refs/heads/main"],check=True,env=env)
+                if op=="release_refresh":
+                    if subprocess.check_output(git+["rev-parse","FETCH_HEAD"],text=True).strip()!=rev:
+                        return {"error":True,"text":"تغيّر main مرة أخرى. اطلب المعاينة من جديد."}
+                    merge=subprocess.run(git+["merge","--quiet","--ff-only",rev],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+                    if merge.returncode: return {"error":True,"text":"تتعارض المسودة مع إصدار أحدث. احتُفظ بتعديلاتك للمراجعة."}
+                    return {"synced":True}
+                if (subprocess.run(git+["merge-base","--is-ancestor",rev,"FETCH_HEAD"]).returncode==0 and
+                    subprocess.check_output(git+["rev-parse",rev+"^"],text=True).strip()==head and
+                    subprocess.run(git+["diff","--cached","--quiet","HEAD"]).returncode==0):
+                    subprocess.run(git+["reset","--quiet","--mixed",rev],check=True)
+        if op!="release_patch": return {"synced":True}
+    if op in {"patch","release_patch"}:
         git = ["/usr/bin/git", "--literal-pathspecs", "-c", "core.fsmonitor=false"]
-        changes = subprocess.check_output(git + ["ls-files", "-z", "--modified", "--deleted", "--others", "--exclude-standard"])
+        changes = subprocess.check_output(git + ["diff","--no-renames","--name-only","-z","HEAD"])
+        changes += subprocess.check_output(git + ["ls-files", "-z", "--others", "--exclude-standard"])
         names = sorted(set(os.fsdecode(changes).split("\0")) - {""})
         if not names:
             return {"text": ""}
@@ -83,9 +71,10 @@ def perform(item):
             subprocess.run(git + ["read-tree", "HEAD"], env=env, check=True)
             subprocess.run(git + ["add", "-A", "--", *names], env=env, check=True)
             patch = subprocess.check_output(git + ["diff", "--cached", "--no-ext-diff", "--no-textconv", "--binary", "HEAD"], env=env)
-        if len(json.dumps(patch.decode("utf-8"),ensure_ascii=False).encode()) > 55000:
+        limit=480000 if op=="release_patch" else 55000
+        if len(json.dumps(patch.decode("utf-8"),ensure_ascii=False).encode()) > limit:
             raise ValueError("Draft exceeds the Discord patch export size limit")
-        return {"text": patch.decode("utf-8")}
+        return {"text":patch.decode("utf-8"),"base":subprocess.check_output(git+["rev-parse","HEAD"],text=True).strip()}
     if op=="files":
         paths = []
         for base, dirs, names in os.walk(ROOT):

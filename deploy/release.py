@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import time
 import urllib.request
+from check_client import test_revision
 
 ROOT = pathlib.Path("/var/lib/blueland-releases")
 CURRENT = ROOT / "current"
@@ -57,13 +58,13 @@ def activate(path):
     raise RuntimeError("Discord readiness timed out")
 
 
-def publish():
+def publish(expected=None):
     previous = CURRENT.resolve(strict=True)
     active = version(previous)
     target = ""
     try:
         report("checking", active, target)
-        target = output(GIT + ["ls-remote", "--exit-code", REPO, "refs/heads/main"]).split()[0]
+        target = expected or output(GIT + ["ls-remote", "--exit-code", REPO, "refs/heads/main"]).split()[0]
         if not re.fullmatch(r"[0-9a-f]{40}", target):
             raise ValueError("Invalid main revision")
         destination = ROOT / target
@@ -74,13 +75,15 @@ def publish():
         if not destination.exists():
             with tempfile.TemporaryDirectory(dir=ROOT, prefix=".build-") as temp:
                 tree = pathlib.Path(temp) / "app"
-                subprocess.run(GIT + ["clone", "--quiet", "--depth", "1", "--single-branch", "--branch", "main",
-                                      "--no-tags", REPO, str(tree)], timeout=60, check=True)
-                if output(GIT + ["-C", str(tree), "rev-parse", "HEAD"]) != target:
-                    raise RuntimeError("GitHub main advanced during checkout; retry")
+                pathlib.Path(temp).chmod(0o755)
+                subprocess.run(GIT+["init","--quiet",str(tree)],check=True)
+                subprocess.run(GIT+["-C",str(tree),"fetch","--quiet","--no-tags","--depth=1",REPO,target],timeout=60,check=True)
+                subprocess.run(GIT+["-C",str(tree),"checkout","--quiet","--detach",target],check=True)
                 subprocess.run(["/usr/local/bin/npm", "ci", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"],
                                cwd=tree, timeout=90, check=True)
-                subprocess.run(["/usr/local/bin/node", "--test"], cwd=tree, timeout=60, check=True)
+                result=test_revision(target,pathlib.Path(temp).name)
+                if not result["ok"]: raise RuntimeError(result["detail"])
+                print(result["detail"],flush=True)
                 shutil.rmtree(tree / ".git")
                 tree.rename(destination)
         report("activating", active, target)
@@ -109,11 +112,19 @@ if __name__ == "__main__":
             return ""
     while True:
         started = requested()
+        receipt=ROOT/"approved-result"
+        pinned=started if started and (not receipt.exists() or receipt.read_text().strip()!=started) else None
         try:
-            publish()
+            publish(pinned)
         except Exception:
             if started != requested():
                 continue
             raise
+        finally:
+            if pinned:
+                # A terminal failure also permits the operators to approve a corrective release.
+                pending=ROOT/".approved-result.next"
+                pending.write_text(pinned+"\n")
+                pending.replace(receipt)
         if started == requested():
             break

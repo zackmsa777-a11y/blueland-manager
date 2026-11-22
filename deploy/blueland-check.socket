@@ -1,0 +1,10 @@
+[Socket]
+ListenStream=/run/blueland-check.sock
+SocketMode=0660
+SocketGroup=blueland-check
+Accept=yes
+MaxConnections=3
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

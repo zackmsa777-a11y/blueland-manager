@@ -7,6 +7,7 @@ Wants=network-online.target
 Type=oneshot
 User=blueland-release
 Group=blueland-release
+SupplementaryGroups=blueland-check
 StateDirectory=blueland-releases
 StateDirectoryMode=0755
 WorkingDirectory=/var/lib/blueland-releases
