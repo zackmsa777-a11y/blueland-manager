@@ -31,26 +31,39 @@ function fixture(t, economy) {
   t.mock.method(global, 'clearTimeout', timer => timers.delete(timer));
 
   const gateway = createDiscordGames(economy);
-  const pings = [];
-  let panel;
-  const message = {id: 'game-message', async edit(payload) { panel = payload; },
-    channel: {async send(payload) { pings.push(payload); }}};
+  const posts = [];
+  let message;
+  const channel = {async send(payload) { return post(payload); }};
+  function post(payload) {
+    const next = {id: `game-message-${posts.length + 1}`, channel, payload, writes: [], async edit(edit) {
+      this.writes.push(edit);
+      this.payload = {...this.payload, ...edit};
+      return this;
+    }};
+    posts.push(next);
+    message = next;
+    return next;
+  }
+  const guildEmojis = [
+    {id: '100000000000000010', name: 'roulette_join', animated: true, available: true},
+    {id: '100000000000000011', name: 'roulette', available: true},
+    {id: '100000000000000012', name: 'roulette_cancel', available: false}
+  ];
+  const guild = {emojis: {async fetch() { return new Map(guildEmojis.map(emoji => [emoji.id, emoji])); }}};
 
   async function send(user, options) {
     let reply;
     const i = {
       user: {id: user, username: `Player ${user.slice(-2)}`, displayAvatarURL: () => avatar(user)},
-      channelId: 'games-room',
-      message,
+      channelId: 'games-room', guild, message,
       ...options,
       isChatInputCommand: () => Boolean(options.commandName),
       isStringSelectMenu: () => Boolean(options.values),
       isButton: () => Boolean(options.customId && !options.values),
       async deferReply() { this.deferred = true; },
       async editReply(payload) {
-        assert.equal(payload.embeds[0].image.url, 'attachment://' + payload.files[0].name);
-        panel = payload;
-        return message;
+        if (payload.embeds) assert.equal(payload.embeds[0].image.url, 'attachment://' + payload.files[0].name);
+        return post(payload);
       },
       async deferUpdate() {},
       async reply(payload) { reply = payload; },
@@ -62,7 +75,7 @@ function fixture(t, economy) {
   }
 
   function button(action) {
-    const control = panel.components.flatMap(row => row.components).find(item => item.custom_id.endsWith(`:${action}`));
+    const control = message.payload.components.flatMap(row => row.components).find(item => item.custom_id.endsWith(`:${action}`));
     assert.ok(control, `Expected a ${action} button`);
     return control;
   }
@@ -78,9 +91,9 @@ function fixture(t, economy) {
   return {
     open: kind => send(host, {commandName: 'game', options: {getSubcommand: () => kind}}),
     click: (user, action) => send(user, {customId: button(action).custom_id}),
-    button, send, tick, timers, pings,
-    get panel() { return panel; },
-    get description() { return panel.files[0].description; }
+    button, send, tick, timers, posts,
+    get panel() { return message.payload; },
+    get description() { return message.payload.files[0].description; }
   };
 }
 
@@ -119,27 +132,39 @@ function assertSpin(file) {
   assert.equal(data[index], 0x3b);
 }
 
-test('roulette spins, pings only the selected player, validates removal and crowns the winner', async t => {
+test('roulette posts the wheel phases separately, pings only the selected player and crowns the winner', async t => {
   const f = fixture(t);
   await f.open('roulette');
-  assertPng(f.panel.files[0], 'roulette', [840, 290]);
+  const [lobby] = f.posts;
+  const banner = f.panel.files[0];
+  assertPng(banner, 'roulette', [840, 290]);
   assert.equal(f.panel.content, `**(1 / ${games.roulette.max})**`);
+  assert.deepEqual(f.button('join').emoji, {id: '100000000000000010', name: 'roulette_join', animated: true});
+  assert.equal(f.button('cancel').emoji.id, '100000000000000011');
+  assert.ok(f.panel.components.flatMap(row => row.components).every(button => button.emoji.id));
   const oldJoin = f.button('join').custom_id;
   await f.click(guest, 'join');
+  assert.equal(f.posts.length, 1);
+  assert.equal(f.panel.files[0], banner);
   assert.equal(f.panel.content, `**(2 / ${games.roulette.max})**`);
   await f.click(host, 'start');
+  assert.equal(f.posts.length, 2);
+  const spin = f.posts[1];
+  const spinCancel = f.button('cancel').custom_id;
   assertSpin(f.panel.files[0]);
-  assert.equal(f.pings.length, 0);
-  const stale = await f.send(spectator, {customId: oldJoin});
+  assert.deepEqual(f.panel.allowedMentions, {parse: []});
+  assert.deepEqual(lobby.writes.at(-1), {components: []});
+  const stale = await f.send(spectator, {customId: oldJoin, message: lobby});
   assert.equal(stale.flags, MessageFlags.Ephemeral);
   assert.match(stale.content, /انتهت/);
   await f.tick();
+  assert.equal(f.posts.length, 3);
   assertPng(f.panel.files[0], 'roulette', [440, 440]);
   const player = f.panel.content.match(/<@(\d+)>/)[1];
   const other = player === host ? guest : host;
-  assert.equal(f.pings.length, 1);
-  assert.deepEqual(f.pings[0].allowedMentions, {parse: [], users: [player]});
-  assert.match(f.pings[0].content, new RegExp(`<@${player}>`));
+  assert.deepEqual(f.panel.allowedMentions, {parse: [], users: [player]});
+  assert.deepEqual(spin.writes, [{components: []}]);
+  assert.match((await f.send(host, {customId: spinCancel, message: spin})).content, /انتهت/);
   const denied = await f.click(other, 'roulette-random');
   assert.equal(denied.flags, MessageFlags.Ephemeral);
   const menu = await f.click(player, 'roulette-kick');
@@ -149,18 +174,18 @@ test('roulette spins, pings only the selected player, validates removal and crow
   const invalid = await f.send(player, {customId: select.custom_id, values: [player]});
   assert.equal(invalid.flags, MessageFlags.Ephemeral);
   await f.send(player, {customId: select.custom_id, values: [other]});
+  assert.equal(f.posts.length, 4);
+  assert.equal(new Set(f.posts.map(post => post.id)).size, 4);
+  assert.ok(f.posts.every(post => post.payload.embeds === undefined));
+  assert.deepEqual(f.posts[2].writes, [{components: []}]);
   assertPng(f.panel.files[0], 'roulette', [820, 500]);
   assert.match(f.description, /الفائز/);
-  const [winner] = f.panel.embeds;
-  assert.equal(winner.title, '👑 الفائز بالروليت');
-  assert.equal(winner.description, `<@${player}>`);
-  assert.equal(winner.thumbnail.url, avatar(player));
-  assert.equal(winner.url, `https://discord.com/users/${player}`);
+  assert.equal(f.panel.content, `**الفائز بالروليت** · <@${player}>`);
   assert.deepEqual(f.panel.components[0].components.map(component => component.custom_id), ['blgshop:bag', 'blgshop:shop']);
   assert.equal(f.timers.size, 0);
 });
 
-test('a roulette withdrawal starts a new spin and an expired choice removes a random opponent', async t => {
+test('a roulette withdrawal posts a new spin and an expired choice removes a random opponent', async t => {
   const f = fixture(t);
   await f.open('roulette');
   await f.click(guest, 'join');
@@ -169,12 +194,29 @@ test('a roulette withdrawal starts a new spin and an expired choice removes a ra
   await f.tick();
   const first = f.panel.content.match(/<@(\d+)>/)[1];
   await f.click(first, 'roulette-leave');
-  assert.equal(f.panel.files[0].name, 'roulette-spin.gif');
+  assert.equal(f.posts.length, 4);
+  assertSpin(f.panel.files[0]);
+  assert.equal(f.posts[1].payload.files[0].name, 'roulette-spin.gif');
+  assert.match(f.panel.content, /الجولة 2/);
   await f.tick();
   const second = f.panel.content.match(/<@(\d+)>/)[1];
   assert.notEqual(second, first);
   await f.tick();
-  assert.equal(f.panel.embeds[0].description, `<@${second}>`);
+  assert.equal(f.panel.content, `**الفائز بالروليت** · <@${second}>`);
+  assert.equal(f.posts.length, 6);
+  assert.equal(f.timers.size, 0);
+});
+
+test('roulette cancel removes controls without replacing the image or posting another wheel', async t => {
+  const f = fixture(t);
+  await f.open('roulette');
+  const file = f.panel.files[0];
+  await f.click(host, 'cancel');
+  assert.equal(f.posts.length, 1);
+  assert.match(f.panel.content, /المضيف ألغى اللعبة/);
+  assert.deepEqual(f.panel.components, []);
+  assert.equal(f.panel.embeds, undefined);
+  assert.equal(f.panel.files[0], file);
   assert.equal(f.timers.size, 0);
 });
 
@@ -186,7 +228,7 @@ test('roulette random button removes an opponent, not the selected player', asyn
   await f.tick();
   const player = f.panel.content.match(/<@(\d+)>/)[1];
   await f.click(player, 'roulette-random');
-  assert.equal(f.panel.embeds[0].description, `<@${player}>`);
+  assert.equal(f.panel.content, `**الفائز بالروليت** · <@${player}>`);
 });
 
 test('roulette awards points to the winner, who can open a private bag and buy a frame', async t => {
@@ -203,7 +245,7 @@ test('roulette awards points to the winner, who can open a private bag and buy a
   assert.equal(store.roulette.profile(player).points, 10);
   assert.equal(store.roulette.profile(other).points, 0);
   assert.match(f.description, /\+10/);
-  assert.match(f.panel.embeds[0].footer.text, /\+10/);
+  assert.match(f.panel.content, /\+10/);
   const bag = await f.send(player, {commandName: 'game', options: {getSubcommand: () => 'bag'}});
   assert.equal(bag.flags, MessageFlags.Ephemeral);
   assert.match(bag.content, /\*\*10\*\*/);

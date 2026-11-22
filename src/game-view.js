@@ -78,60 +78,64 @@ function cardMessage(card, description) {
 const {rouletteTargets} = require('./game-rules');
 const {renderRouletteSpin, renderRouletteLobby, renderRouletteResult, renderRouletteWinner} = require('./game-card');
 
-const rouletteEconomyButtons = () => row([
-  {type: 2, style: 2, label: 'حقيبتي', custom_id: 'blgshop:bag', emoji: {name: '🎒'}},
-  {type: 2, style: 2, label: 'متجر النقاط', custom_id: 'blgshop:shop', emoji: {name: '🛒'}}
+function withRouletteEmoji(game, key, control) {
+  const emoji = game.rouletteEmojis?.[key];
+  return emoji ? {...control, emoji} : control;
+}
+
+const rouletteButton = (game, action, label, style = 2) =>
+  withRouletteEmoji(game, action.replace(/^roulette-/, ''), button(game, action, label, style));
+
+const rouletteEconomyButtons = game => row([
+  withRouletteEmoji(game, 'bag', {type: 2, style: 2, label: 'حقيبتي', custom_id: 'blgshop:bag'}),
+  withRouletteEmoji(game, 'shop', {type: 2, style: 2, label: 'متجر النقاط', custom_id: 'blgshop:shop'})
 ]);
 
-function rouletteLobby(game) {
+function rouletteLobby(game, includeImage) {
   const count = `(${game.players.size} / ${games.roulette.max})`;
-  const display = (action, label, emoji, style = 2) => ({...button(game, action, label, style), emoji: {name: emoji}});
   return {
     content: `**${count}**`, allowedMentions: {parse: []},
-    files: [{attachment: renderRouletteLobby(game.rouletteBanner), name: 'roulette.png', description: `روليت BlueLand · التسجيل مفتوح ${count}`}],
-    embeds: [{image: {url: 'attachment://roulette.png'}}],
-    components: [row([display('join', 'دخول', '➕'), display('leave', 'خروج', '🚪'),
-      display('start', 'ابدأ', '▶️', 1), display('cancel', 'إلغاء', '✖️')]), rouletteEconomyButtons()]
+    ...(includeImage ? {files: [{attachment: game.rouletteBanner || renderRouletteLobby(), name: 'roulette.png',
+      description: 'روليت BlueLand · التسجيل مفتوح'}]} : {}),
+    components: [row([rouletteButton(game, 'join', 'دخول'), rouletteButton(game, 'leave', 'خروج'),
+      rouletteButton(game, 'start', 'ابدأ', 1), rouletteButton(game, 'cancel', 'إلغاء', 4)]), rouletteEconomyButtons(game)]
   };
 }
 
 function roulettePanel(game) {
-  const title = games.roulette.name;
-  const items = game.alive.map(id => ({label: getName(game, id)}));
-  const selected = game.alive.indexOf(game.roulettePlayer);
-  const cancel = button(game, 'cancel', 'إلغاء', 4);
   const allowedMentions = {parse: []};
-  const turn = `الجولة ${game.round} · ${items.length} في اللعب`;
+  if (game.phase === 'cancelled') {
+    return {content: `**أُغلقت لعبة الروليت** · ${game.endReason}`, allowedMentions, components: []};
+  }
   if (game.phase === 'done') {
     const name = getName(game, game.winner);
-    const avatar = game.avatars?.get(game.winner);
     const reward = game.winnerReward || 0;
+    const points = reward ? ` · +${reward} نقاط` : '';
     const card = renderRouletteWinner({name, avatar: game.winnerAvatar, reward, style: game.winnerStyle});
-    return {content: null, allowedMentions, components: [rouletteEconomyButtons()],
-      files: [{attachment: card, name: 'roulette.png', description: `الفائز · ${name}${reward ? ` · +${reward} نقاط` : ''}`}],
-      embeds: [{title: '👑 الفائز بالروليت', description: `<@${game.winner}>`,
-        url: `https://discord.com/users/${game.winner}`, color: 0xe5b460,
-        image: {url: 'attachment://roulette.png'}, ...(avatar ? {thumbnail: {url: avatar}} : {}),
-        ...(reward ? {footer: {text: `+${reward} نقاط للروليت`}} : {})}]};
+    return {content: `**الفائز بالروليت** · <@${game.winner}>${points}`, allowedMentions,
+      components: [rouletteEconomyButtons(game)],
+      files: [{attachment: card, name: 'roulette.png', description: `الفائز · ${name}${points}`}]};
   }
+  const names = game.alive.map(id => getName(game, id));
+  const selected = game.alive.indexOf(game.roulettePlayer);
+  const cancel = rouletteButton(game, 'cancel', 'إلغاء', 4);
+  const turn = `الجولة ${game.round} · ${names.length} في اللعب`;
   if (game.rouletteStage === 'spin') {
-    const footer = game.lastOut ? `خرج ${getName(game, game.lastOut)}` : 'العجلة تدور لاختيار لاعب';
+    const footer = game.lastOut ? `خرج <@${game.lastOut}> · العجلة تدور` : 'العجلة تدور لاختيار لاعب';
     return {
-      content: null, allowedMentions, components: [row([cancel])],
-      files: [{attachment: renderRouletteSpin(items.map(item => item.label), selected), name: 'roulette-spin.gif', description: `${turn} · ${footer}`}],
-      embeds: [{title: `${title} · ${turn}`, description: footer, image: {url: 'attachment://roulette-spin.gif'}}]
+      content: `**الروليت · ${turn}**\n${footer}`, allowedMentions, components: [row([cancel])],
+      files: [{attachment: renderRouletteSpin(names, selected), name: 'roulette-spin.gif',
+        description: `الروليت · ${turn} · العجلة تدور` }]
     };
   }
-  const footer = 'اختر لاعبًا يخرج، أو انسحب، أو اختر عشوائيًا';
-  const spinResult = {
-    files: [{attachment: renderRouletteResult(items.map(item => item.label), selected, game.rouletteAvatar),
-      name: 'roulette.png', description: `${title} · ${turn} · ${footer}`}],
-    embeds: [{image: {url: 'attachment://roulette.png'}}]
+  return {
+    content: `**الروليت · ${turn}**\n<@${game.roulettePlayer}> وقفت العجلة عليك! اختار خلال 20 ثانية.`,
+    allowedMentions: {parse: [], users: [game.roulettePlayer]},
+    files: [{attachment: renderRouletteResult(names, selected, game.rouletteAvatar), name: 'roulette.png',
+      description: `الروليت · ${turn} · العجلة توقفت على ${getName(game, game.roulettePlayer)}`}],
+    components: [row([rouletteButton(game, 'roulette-kick', 'إخراج لاعب', 1), rouletteButton(game, 'roulette-leave', 'انسحاب', 4),
+      rouletteButton(game, 'roulette-random', 'اختيار عشوائي'), cancel])]
   };
-  const action = (id, label, style, emoji) => ({...button(game, id, label, style), emoji: {name: emoji}});
-  return {...spinResult, content: `<@${game.roulettePlayer}> وقفت العجلة عليك! اختار خلال 20 ثانية.`, allowedMentions,
-    components: [row([action('roulette-kick', 'إخراج لاعب', 1, '⭐'), action('roulette-leave', 'انسحاب', 4, '🚪'),
-      action('roulette-random', 'اختيار عشوائي', 2, '🎲'), cancel])]};
 }
 
 function rouletteMenu(game) {
@@ -140,15 +144,15 @@ function rouletteMenu(game) {
     custom_id: customId(game, 'roulette-target'), placeholder: 'اختر لاعبًا', options}])]};
 }
 
-function gamePanel(game) {
-  if (game.kind === 'roulette' && game.phase === 'lobby') return rouletteLobby(game);
-  if (game.kind === 'roulette' && (game.phase === 'play' || game.phase === 'done')) return roulettePanel(game);
+function gamePanel(game, {includeLobbyImage = true} = {}) {
+  if (game.kind === 'roulette') {
+    return game.phase === 'lobby' ? rouletteLobby(game, includeLobbyImage) : roulettePanel(game);
+  }
   const title = games[game.kind].name;
   const {subtitle, footer} = cardDetails(game);
   const items = playerCards(game);
   return {
     ...cardMessage({game: game.kind, title, subtitle, footer, items}, `${title} · ${subtitle} · ${footer}`),
-    ...(game.kind === 'roulette' && game.phase === 'cancelled' ? {content: null} : {}),
     components: controls(game),
     allowedMentions: {parse: []}
   };

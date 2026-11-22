@@ -7,6 +7,7 @@ const {games, moves, createGame, start, eligiblePlayers, choose, ready, advance,
   spinRoulette, stopRoulette, resolveRoulette} = require('./game-rules');
 const {gamePanel, privateRole, voteMenu, rouletteMenu} = require('./game-view');
 const {rouletteBanner, rouletteAvatar} = require('./roulette-media');
+const {rouletteEmojis} = require('./roulette-emoji');
 const {shopPanel} = require('./roulette-shop');
 
 const privateReply = {flags: MessageFlags.Ephemeral, allowedMentions: {parse: []}};
@@ -40,9 +41,24 @@ function createDiscordGames(economy) {
     const version = ++game.version;
     game.edits = game.edits.then(async () => {
       if (version !== game.version) return;
-      await game.message.edit({...gamePanel(game), attachments: []});
+      if (game.kind !== 'roulette') {
+        await game.message.edit({...gamePanel(game), attachments: []});
+        return;
+      }
+      const terminal = game.phase === 'done' || game.phase === 'cancelled';
+      if (!active(game) && !terminal) return;
+      const previous = game.message;
+      if (game.phase === 'play' || game.phase === 'done') {
+        const next = await previous.channel.send(gamePanel(game));
+        game.message = next;
+        void previous.edit({components: []}).catch(() => {});
+      } else {
+        await previous.edit(gamePanel(game, {includeLobbyImage: false}));
+      }
     }).catch(err => {
-      if ([10003, 10008, 50001, 50013].includes(err.code)) release(game);
+      if (game.kind === 'roulette') {
+        if (active(game)) cancel(game, 'تعذّر تحديث الروليت. افتح لعبة جديدة.');
+      } else if ([10003, 10008, 50001, 50013].includes(err.code)) release(game);
     });
     return game.edits;
   }
@@ -64,6 +80,7 @@ function createDiscordGames(economy) {
   }
 
   function startSpin(game) {
+    clearTimeout(game.timer);
     spinRoulette(game);
     const turn = game.round;
     const picked = game.roulettePlayer;
@@ -81,13 +98,9 @@ function createDiscordGames(economy) {
     if (!stopRoulette(game)) return;
     const turn = game.round;
     const player = game.roulettePlayer;
-    publish(game).then(async () => {
+    publish(game).then(() => {
       if (!active(game) || game.round !== turn || game.rouletteStage !== 'choose') return;
       rouletteTimer(game, 20_000, () => finishSpin(game, player, 'random'));
-      if (typeof game.message.channel?.send !== 'function') return;
-      const panel = game.message.url ? ` [افتح لوحة الجولة](<${game.message.url}>)` : '';
-      await game.message.channel.send({content: `<@${player}> وقفت العجلة عليك! قدّامك 20 ثانية تختار.${panel}`,
-        allowedMentions: {parse: [], users: [player]}}).catch(() => {});
     });
   }
 
@@ -162,7 +175,11 @@ function createDiscordGames(economy) {
     rooms.set(game.room, game);
     try {
       await i.deferReply();
-      if (kind === 'roulette') game.rouletteBanner = await rouletteBanner(i.client);
+      if (kind === 'roulette') {
+        const [banner, emojis] = await Promise.all([rouletteBanner(i.client), rouletteEmojis(i.guild)]);
+        game.rouletteBanner = banner;
+        game.rouletteEmojis = emojis;
+      }
       game.message = await i.editReply(gamePanel(game));
       if (active(game)) schedule(game);
     } catch (err) {

@@ -1,10 +1,11 @@
 'use strict';
 
-// Original BlueLand roulette artwork supplied in Discord. Resolve a fresh CDN URL;
-// signed attachment URLs expire. The renderer has a bundled fallback.
+// BlueLand roulette artwork supplied in Discord. Resolve a fresh CDN URL each
+// time the in-process image cache is empty, since signed URLs expire.
 const sourceChannel = '1574014085027209308';
-const sourceMessage = '1574140600251580426';
-const artworkId = '1574140599450345533';
+const sourceMessage = '1574147765036916938';
+const artworkId = '1574147764504494150';
+const artworkName = 'no-background-1.png';
 const hosts = new Set(['cdn.discordapp.com', 'media.discordapp.net']);
 const pngMagic = Buffer.from('89504e470d0a1a0a', 'hex');
 let bannerPromise;
@@ -42,7 +43,7 @@ async function pngFromCdn(raw, pathCheck, {limit, side, signal}) {
   const width = png.readUInt32BE(16);
   const height = png.readUInt32BE(20);
   if (!width || !height || width > side || height > side) return null;
-  return `data:image/png;base64,${png.toString('base64')}`;
+  return png;
 }
 
 function rouletteBanner(client) {
@@ -52,9 +53,9 @@ function rouletteBanner(client) {
     bannerPromise = bounded(signal, async () => {
       const channel = await client.channels.fetch(sourceChannel);
       const message = await channel?.messages?.fetch({message: sourceMessage, cache: false, force: true});
-      const file = message?.attachments.get(artworkId);
+      const file = message?.attachments?.get(artworkId);
       if (!file) return null;
-      return pngFromCdn(file.url, path => path === `/attachments/${sourceChannel}/${artworkId}/IMG_3468.png`,
+      return pngFromCdn(file.url, path => path === `/attachments/${sourceChannel}/${artworkId}/${artworkName}`,
         {limit: 2_000_000, side: 4096, signal});
     }).then(result => {
       if (!result) bannerPromise = null;
@@ -68,7 +69,10 @@ function rouletteAvatar(url) {
   if (!url) return Promise.resolve(null);
   const signal = AbortSignal.timeout(1600);
   const allowed = /^(?:\/(?:avatars\/\d+|guilds\/\d+\/users\/\d+\/avatars)\/(?:a_)?[a-f0-9]{32}|\/embed\/avatars\/\d+)\.png$/i;
-  return bounded(signal, () => pngFromCdn(url, path => allowed.test(path), {limit: 350_000, side: 256, signal}));
+  return bounded(signal, async () => {
+    const png = await pngFromCdn(url, path => allowed.test(path), {limit: 350_000, side: 256, signal});
+    return png ? `data:image/png;base64,${png.toString('base64')}` : null;
+  });
 }
 
 module.exports = {rouletteBanner, rouletteAvatar};
