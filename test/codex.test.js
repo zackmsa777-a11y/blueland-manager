@@ -45,6 +45,66 @@ test('workspace progress counts completed commands and distinct edited files bef
   assert.match(events[0],/Thinking/);
   assert.match(events.at(-2),/Finished · Edited 1 file · Ran 1 command/);assert.equal(events.at(-1),'done');
 });
+test('a paused workspace request resumes from disk on a reply to its stop message',async t=>{
+  const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'blueland-resume-'));
+  const filename=path.join(dir,'state.sqlite'),h=fixture(t);
+  let db=openStore(filename);
+  t.after(()=>{db.close();fs.rmSync(dir,{recursive:true,force:true});});
+  const original=h.message('+code Finish the report command');
+  let calls=0;
+  const first=createCodexHandler({store:db.codex,isAdmin:async()=>true,ask:async()=>{
+    calls++;return {actions:[{op:calls===1?'workspace_edit':'workspace_read',target:'src/report.js',value:'',extra:''}],answer:''};
+  },workspace:async a=>a.op==='edit'?{edited:a.target,text:'saved'}:{text:'file contents'}});
+  await first(original);
+  assert.match(h.replies.at(-1).content,/كمل/);
+  assert.deepEqual(db.codex.latestTask(actor,channel).progress.files,['src/report.js']);
+  db.close();db=openStore(filename);
+  const requests=[],ops=[],second='other-operator';
+  const next=createCodexHandler({store:db.codex,isAdmin:async id=>[actor,second].includes(id),
+    ask:async q=>{requests.push(q);return {actions:[],answer:'finished the task'};},
+    workspace:async a=>{ops.push(a.target);return {text:'?? src/report.js',exit:0,ran:true};}});
+  const ref={messageId:'pause',channelId:channel};
+  const parent={id:ref.messageId,content:'حفظت تقدّم المهمة.',author:{id:bot},guildId:catalog.guildId,channelId:channel,reference:{messageId:original.id}};
+  const extras={reference:ref,fetchReference:async()=>parent};
+  await next(h.message('كمل',{...extras,author:{id:'unauthorized'}}));
+  assert.equal(requests.length,0);
+  await next(h.message('كمل',{...extras,author:{id:second}}));
+  assert.equal(requests[0].prompt,'Finish the report command');
+  assert.deepEqual(requests[0].taskCheckpoint.files,['src/report.js']);
+  assert.ok(requests[0].context.operations.every(op=>op.startsWith('workspace_')));
+  assert.deepEqual(ops,['git status']);assert.equal(requests[0].workspaceResults[0].text,'?? src/report.js');
+  assert.equal(db.codex.latestTask(actor,channel),null);
+});
+
+test('bare continuation uses only the requesting operator and channel and never replays Discord actions',async t=>{
+  const h=fixture(t),s=h.db.codex;
+  s.startTask('original',actor,channel,'Finish coding');
+  const requests=[];
+  const handle=createCodexHandler({store:s,isAdmin:async()=>true,
+    ask:async q=>{requests.push(q);return {answer:'',actions:[{op:'note_save',target:'',value:'unrequested',extra:''}]};},
+    workspace:async()=>({ran:true,exit:0,text:'clean'})});
+  assert.equal(await handle(h.message('كمل',{channelId:'elsewhere'})),false);
+  assert.equal(await handle(h.message('كمل',{author:{id:'someone-else'}})),false);
+  const resumed=h.message('كمل');await handle(resumed);
+  assert.equal(requests.length,1);assert.equal(requests[0].prompt,'Finish coding');
+  assert.equal(s.taskFor(resumed.id,channel).active,1);assert.deepEqual(s.notes(actor),[]);
+});
+
+test('a verified stop reply from before checkpoints existed can recover its original request',async t=>{
+  const h=fixture(t),s=h.db.codex,requests=[];
+  const original=h.message('<@'+bot+'> Finish a draft command');
+  s.begin(original.id,actor);s.finish(original.id,'failed');
+  const stopped={id:'old-stop',content:'وصلت إلى حد خطوات الطلب. اطلب المتابعة لاستكمال العمل.',
+    author:{id:bot},guildId:catalog.guildId,channelId:channel,reference:{messageId:original.id},fetchReference:async()=>original};
+  const handle=createCodexHandler({store:s,isAdmin:async id=>id===actor,
+    workspace:async()=>({ran:true,exit:0,text:'?? src/example.js'}),
+    ask:async q=>{requests.push(q);return {answer:'done',actions:[]};}});
+  await handle(h.message('كمل',{reference:{messageId:stopped.id,channelId:channel},fetchReference:async()=>stopped}));
+  assert.equal(requests[0].prompt,'Finish a draft command');
+  assert.equal(requests[0].workspaceResults[0].text,'?? src/example.js');
+});
+
 test('compiled Discord commands run in QuickJS and return only data',async()=>{
   const {runFeature}=require('../src/codex-feature');
   const fn='input => ({answer: input.args.toUpperCase(), actions: []})';
@@ -148,6 +208,20 @@ test('Codex only runs for a human guild administrator in BlueLand',async t=>{
     await h.handle(h.message('<@'+bot+'> hello',extras));
   h.env.admin=false;await h.handle(h.message('+model gpt-6.2-astra high'));
   assert.equal(h.calls.length,0);assert.equal(h.replies.length,0);
+});
+test('member usage questions get public help without granting access to Codex or its actions',async t=>{
+  const h=fixture(t);
+  h.env.admin=false;
+  await h.handle(h.message('<@'+bot+'> مش فاهم كيف يشتغل البوت'));
+  assert.match(h.replies.at(-1).content,/\/help/);
+  const reference={channelId:channel,messageId:'parent',guildId:catalog.guildId};
+  const parent={id:'parent',guildId:catalog.guildId,channelId:channel,author:{id:bot},content:'guide'};
+  const question=h.message('كيف أفتح تذكرة؟',{reference,fetchReference:async()=>parent});
+  await h.handle(question);await h.handle(question);
+  assert.match(h.replies.at(-1).content,/\/ticket create/);
+  await h.handle(h.message('كيف أقدم؟',{reference,fetchReference:async()=>({...parent,author:{id:'someone-else'}})}));
+  await h.handle(h.message('+vps deploy'));await h.handle(h.message('كمل'));
+  assert.equal(h.calls.length,0);assert.equal(h.replies.length,2);
 });
 test('mentions, unpinged replies, model switching and duplicate delivery',async t=>{
   const h=fixture(t),m=h.message('<@!'+bot+'> hello');

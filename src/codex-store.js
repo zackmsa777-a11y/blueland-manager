@@ -11,6 +11,11 @@ function openCodexStore(db) {
     CREATE TABLE IF NOT EXISTS codex_deliveries (id TEXT PRIMARY KEY, actor TEXT NOT NULL, created INTEGER NOT NULL, status TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS codex_confirmations (message TEXT PRIMARY KEY, actor TEXT NOT NULL, channel TEXT NOT NULL, expires INTEGER NOT NULL, actions TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS codex_context_cursors (actor TEXT NOT NULL, channel TEXT NOT NULL, message TEXT NOT NULL, PRIMARY KEY(actor,channel));
+    CREATE TABLE IF NOT EXISTS codex_workspace_tasks (
+      id TEXT PRIMARY KEY,actor TEXT NOT NULL,channel TEXT NOT NULL,prompt TEXT NOT NULL,
+      progress TEXT NOT NULL DEFAULT '{"files":[],"steps":[]}',updated INTEGER NOT NULL,active INTEGER NOT NULL DEFAULT 1
+    );
+    CREATE TABLE IF NOT EXISTS codex_workspace_turns (message TEXT PRIMARY KEY,task TEXT NOT NULL);
   `);
   if (!db.prepare('PRAGMA table_info(codex_commands)').all().some(c=>c.name==='source'))
     db.exec("ALTER TABLE codex_commands ADD COLUMN source TEXT NOT NULL DEFAULT ''");
@@ -18,7 +23,28 @@ function openCodexStore(db) {
   const setCursor=db.prepare(`INSERT INTO codex_context_cursors VALUES(?,?,?)
     ON CONFLICT(actor,channel) DO UPDATE SET message=excluded.message`);
   const getDelivery=db.prepare('SELECT 1 FROM codex_deliveries WHERE id=?');
+  function task(row) {return row?{...row,progress:JSON.parse(row.progress)}:null;}
   return {
+    startTask(id,actor,channel,prompt) {
+      db.prepare('INSERT OR IGNORE INTO codex_workspace_tasks(id,actor,channel,prompt,updated) VALUES(?,?,?,?,?)').run(id,actor,channel,prompt,Date.now());
+      return this.taskFor(id,channel);
+    },
+    taskFor(message,channel) {
+      return task(db.prepare('SELECT * FROM codex_workspace_tasks WHERE channel=? AND id=COALESCE((SELECT task FROM codex_workspace_turns WHERE message=?),?)').get(channel,message,message));
+    },
+    latestTask(actor,channel) {
+      return task(db.prepare('SELECT * FROM codex_workspace_tasks WHERE active=1 AND actor=? AND channel=? ORDER BY updated DESC,rowid DESC LIMIT 1').get(actor,channel));
+    },
+    linkTask(message,id) {db.prepare('INSERT OR IGNORE INTO codex_workspace_turns VALUES(?,?)').run(message,id);},
+    recordStep(task,op,target,outcome) {
+      const state=task.progress;
+      if (outcome.edited && !state.files.includes(outcome.edited)) state.files=[...state.files,outcome.edited].slice(-100);
+      state.steps.push({op,target:target.slice(0,200),edited:outcome.edited||undefined,exit:outcome.exit,error:outcome.error||undefined});
+      state.steps=state.steps.slice(-24);
+      db.prepare('UPDATE codex_workspace_tasks SET progress=?,updated=? WHERE id=?').run(JSON.stringify(state),Date.now(),task.id);
+    },
+    endTask(id) {db.prepare("UPDATE codex_workspace_tasks SET active=0,prompt='',progress='{}',updated=? WHERE id=?").run(Date.now(),id);},
+    delivery(id) {return db.prepare('SELECT actor,status FROM codex_deliveries WHERE id=?').get(id);},
     contextCursor: (actor,channel) => getCursor.get(actor,channel)?.message,
     saveContextCursor: (actor,channel,message) => setCursor.run(actor,channel,message),
     isCodexRequest: id => Boolean(getDelivery.get(id)),

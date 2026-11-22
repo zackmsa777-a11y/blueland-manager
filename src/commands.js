@@ -47,7 +47,7 @@ const chatAliases={
 const helpText=[
   '**أوامر BlueLand Empire**',
   'الطاقم · +ترقية @العضو، +تخفيض @العضو، /promote، /dashboard',
-  'Codex · للمسؤولين: منشن البوت أو رد على رسالته. +model يعرض الموديل ودرجة التفكير.',
+  'للمساعدة منشن البوت واسأل «كيف أستخدم البوت؟». مالك السيرفر والمسؤول المخوّل يقدرون يتابعون مهمة Codex متوقفة بالردّ بكلمة «كمل» على رسالة التوقف.',
   'الإشراف · /warn، /warnings، /unwarn، /mute، /unmute، /timeout، /untimeout، /lock، /unlock، /kick، /ban، /unban',
   'الطلبات · /request submit للتقديم، /request status لمتابعة القرار',
   'الدعم · /ticket create لفتح تذكرة خاصة ثم claim أو close من داخلها',
