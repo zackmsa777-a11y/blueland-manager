@@ -69,7 +69,9 @@ function connectDiscord(store, env) {
     const code=store.loginCode(actor);
     return 'رمز دخول لوحة BlueLand، صالح لخمس دقائق:\n'+code+(env.PUBLIC_ORIGIN?'\n'+env.PUBLIC_ORIGIN:'');
   }
-  const run=commandRunner({store,community,promotions:service,readyGuild,pair});
+  const bulkRole = require('./bulk-role').createBulkRole({readyGuild,
+    reservedRole: id => allowed.has(id) || store.community.settings().supportRole === id});
+  const run=commandRunner({store,community,promotions:service,readyGuild,pair,bulkRole});
   const onMessage=createMessageHandler({authorize:community.dashboard,service,store,publicOrigin:env.PUBLIC_ORIGIN,run,parse:parseChat});
   let syncing=false;
   async function sync() {

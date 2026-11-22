@@ -67,11 +67,18 @@ const helpText=[
   'الإشراف بالعربي · /تحذير، /سحب-تحذير، /تحذيرات، /تايم، /فك-تايم، /ميوت، /فك-ميوت، /قفل، /فتح، /طرد، /بان، /فك-بان',
   'الطلبات والألعاب بالعربي · /طلب تقديم، /طلب حالة، /تذكرة فتح، /ألعاب روليت، /ألعاب كراسي، /ألعاب مافيا، /ألعاب حجر-ورقة-مقص، /ألعاب حقيبة، /ألعاب متجر',
   'اختصارات الشات · +ر للرولات، +بان @العضو السبب، +فك-بان معرّف_العضو',
+  'مالك السيرفر · +ر الجميع @الرول أو +ر الجميع معرّف_الرول لتوزيع رول عادي على الأعضاء.',
   'السيرفر · /roles، /server، /ping، /rank، /top'
 ].join('\n');
 function parseChat(text) {
   if (!text.startsWith('+')) return null;
   const [first,...parts]=text.slice(1).trim().split(/\s+/u);
+  if (first==='ر' && parts[0]==='الجميع') {
+    const token=parts[1] ?? '';
+    const match=/^<@&(\d{17,20})>$/.exec(token) || /^(\d{17,20})$/.exec(token);
+    if (parts.length!==2 || !match) throw new RuleError('اكتب +ر الجميع وبعدها منشن رول واحد أو معرّف الرول.');
+    return {action:'bulk-role',roleId:match[1]};
+  }
   const action=Object.hasOwn(chatAliases,first) ? chatAliases[first] : Object.values(chatAliases).includes(first) ? first : null;
   if (!action) return null;
   if (action==='demote') return {action,...parseRankChangeArgs(parts,'+تخفيض')};
@@ -88,10 +95,23 @@ function parseChat(text) {
   return input;
 }
 
-function commandRunner({store,community,promotions,readyGuild,pair}) {
+function commandRunner({store,community,promotions,readyGuild,pair,bulkRole}) {
   const db=store.community;
   return async function run(input) {
     const {action,actor,delivery,channel}=input;
+    if (action==='bulk-role') {
+      const result=await bulkRole({actor,delivery,roleId:input.roleId});
+      const summary=[
+        'نتيجة توزيع <@&'+input.roleId+'>:',
+        'تمت الإضافة وتحققت منها: **'+result.added+'**',
+        'عندهم الرول مسبقًا: **'+result.already+'**',
+        'تم تخطيهم (بوتات أو أعضاء لم يكملوا الانضمام): **'+result.skipped+'**'
+      ];
+      if (result.failed) summary.push('تعذّرت الإضافة: **'+result.failed+'**');
+      if (result.unverified) summary.push('تعذّر التحقق من الإضافة: **'+result.unverified+'**');
+      if (result.remaining) summary.push('توقف التوزيع بعد تعذّر إعادة التحقق من الصلاحيات. لم تتم المحاولة لـ **'+result.remaining+'** عضو.');
+      return summary.join('\n');
+    }
     if (action==='ping') return 'BlueLand Manager متصل. زمن استجابة ديسكورد '+Math.max(0,Math.round(readyGuild().client.ws.ping))+' ms.';
     if (action==='help') return helpText;
     if (action==='server') { const g=readyGuild(); return g.name+' · '+g.memberCount+' أعضاء · '+g.roles.cache.size+' رول.'; }
