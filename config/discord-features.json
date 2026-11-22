@@ -1,7 +1,7 @@
 {
   "activity": {
-    "rank": "<@{member}> · المستوى {level} · {points} نقطة.",
-    "top": "{rows}",
+    "rank": "**مستوى النشاط** · <@{member}>\nالمستوى **{level}** · **{points}** نقطة\nالمتبقي للمستوى التالي · **{remaining}** نقطة",
+    "top": "**🏆 توب النشاط | BlueLand**\n{rows}",
     "row": "{position}. <@{member}> · {points} نقطة",
     "empty": "تظهر قائمة النشاط بعد أول مشاركة مؤهلة."
   },

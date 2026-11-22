@@ -8,6 +8,7 @@ const { createCodexHandler } = require('./codex-chat');
 const { createCommunity } = require('./community');
 const { communityGateway } = require('./discord-community');
 const { commandRunner, parseChat, registerCommands, interactionInput, commands } = require('./commands');
+const { createDiscordGames } = require('./discord-games');
 
 function connectDiscord(store, env) {
   let client, api, timer, recovering = false, cachedDirectory, refresh, validUntil = 0, attemptedToken;
@@ -53,6 +54,7 @@ function connectDiscord(store, env) {
   const service = makeService(store, { context, change }, allowed);
   const gateway=communityGateway(readyGuild,context);
   const community=createCommunity(store,gateway,service);
+  const games=createDiscordGames();
   async function authorize(id) {
     const ctx = await context(id);
     service.checkOperator(ctx);
@@ -104,9 +106,19 @@ function connectDiscord(store, env) {
         client.on(event, () => { validUntil = 0; });
       }
       client.on(api.Events.MessageCreate, onMessage);
-      client.on(api.Events.ChannelDelete,c=>{if (c.guildId===catalog.guildId) store.community.ticketRemoved(c.id);});
+      client.on(api.Events.ChannelDelete,c=>{
+        if (c.guildId!==catalog.guildId) return;
+        games.removeRoom(c.id);
+        store.community.ticketRemoved(c.id);
+      });
+      client.on(api.Events.ThreadDelete,t=>games.removeRoom(t.id));
+      client.on(api.Events.MessageDelete,m=>games.removeMessage(m.channelId,m.id));
+      client.on(api.Events.MessageBulkDelete,messages=>{
+        for (const m of messages.values()) games.removeMessage(m.channelId,m.id);
+      });
       client.on(api.Events.InteractionCreate, async i=>{
-        if (!i.isChatInputCommand() || i.guildId!==catalog.guildId || !commands.some(c=>c.name===i.commandName)) return;
+        if (i.guildId!==catalog.guildId || await games.handle(i)) return;
+        if (!i.isChatInputCommand() || !commands.some(c=>c.name===i.commandName)) return;
         try {
           await i.deferReply({flags:api.MessageFlags.Ephemeral});
           await i.editReply({content:await run(interactionInput(i)),allowedMentions:{parse:[]}});
