@@ -8,6 +8,10 @@
 
 تستقبل خدمة BlueLand أوامر السيرفر المسجّلة والأوامر التي تبدأ بعلامة `+`. تعرض `/help` داخل السيرفر دليل الطاقم والأعضاء. يستخدم Hermes أوامره العامة وأدوات Discord والذاكرة، ويحفظ جلساته في مجلد الخدمة. يظل سجل الترقيات والطلبات والتذاكر في قاعدة BlueLand.
 
+يعرض `+vps release` أو `/release status` الإصدار الشغّال ونتيجة آخر محاولة من الـVPS. يتحقق `/release status 94a58746c2b0` من دخول تحديث الألعاب في الإصدار الشغّال. اطلب من Hermes «انشر» أو استخدم `/release deploy` لمراجعة الفرق مع GitHub main. يعرض Hermes أمر التأكيد إذا وُجد إصدار جديد، ثم يختبر وينشر نفس النسخة بعد تأكيد مسؤول في المحادثة نفسها.
+
+تُثبّت إضافة `deploy/hermes-release` باسم `blueland-release` في مجلد إضافات Hermes. استخدم وحدة `deploy/blueland-release.service` لكل من الاسم العادي والقالب `blueland-release@.service`، وثبّت قاعدة polkit المرفقة. يطابق القالب معرّف Git المؤكّد مع رأس main قبل تفعيل الإصدار.
+
 على الـVPS ثبّت الإصدار المثبّت بتسجيل Git `caafe5389ae585ef77387a962aee05b1bcf17029` في `/opt/blueland-hermes/source`، وثبّت تبعياته من ملف القفل مع إضافة `discord` في `/opt/blueland-hermes/venv`. طبّق `deploy/hermes-blueland.patch` على المحوّل لتوجيه أوامر كل خدمة. أضف محتوى `deploy/hermes-blueland-context.md` إلى `SOUL.md` في ملف Hermes التعريفي ليعرف المساعد أوامر السيرفر. يستخدم حساب النظام `blueland-hermes` ملف `deploy/hermes-config.yaml` في `/var/lib/blueland-hermes/config.yaml`. اقرأ توكن البوت من ملف الخدمة الخاص `/etc/blueland-hermes/discord.env` وسجّل دخول موفر OpenAI Codex في حساب Hermes. شغّل `deploy/blueland-hermes.service` بجانب `blueland.service`.
 
 ## التشغيل المحلي

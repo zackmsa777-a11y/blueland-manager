@@ -1,6 +1,9 @@
 polkit.addRule(function(action, subject) {
     if (action.id !== "org.freedesktop.systemd1.manage-units") return;
     var unit = action.lookup("unit");
+    if (subject.user === "blueland-hermes" && action.lookup("verb") === "start" &&
+        /^blueland-release@[a-f0-9]{40}\.service$/.test(unit))
+        return polkit.Result.YES;
     if (subject.user === "blueland-release" && unit === "blueland.service" && action.lookup("verb") === "restart")
         return polkit.Result.YES;
 });

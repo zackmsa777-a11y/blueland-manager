@@ -11,7 +11,7 @@ SupplementaryGroups=blueland-check
 StateDirectory=blueland-releases
 StateDirectoryMode=0755
 WorkingDirectory=/var/lib/blueland-releases
-ExecStart=/usr/bin/python3 /usr/local/libexec/blueland-release.py
+ExecStart=/usr/bin/python3 /usr/local/libexec/blueland-release.py %i
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
 Environment=GIT_TERMINAL_PROMPT=0
 TimeoutStartSec=6min

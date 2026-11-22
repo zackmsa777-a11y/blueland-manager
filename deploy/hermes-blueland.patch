@@ -13,10 +13,12 @@
 +                return await upstream_check(interaction)
 +            self._client.tree.interaction_check = blueland_command
              adapter_self = self  # capture for closure
-@@ -1633,2 +1643,8 @@
+@@ -1633,2 +1643,10 @@
          """Return ``(admitted, role_authorized)`` for one Discord event."""
 +        guild = getattr(message, "guild", None)
-+        if (message.content or "").lstrip().startswith("+"):
++        if (message.content or "").strip().lower() == "+vps release" and self._client.user:
++            message.content = f"<@{self._client.user.id}> /release status"
++        elif (message.content or "").lstrip().startswith("+"):
 +            return False, False
 +        if guild and (str(guild.id) != os.environ["BLUELAND_GUILD_ID"]
 +                      or not getattr(getattr(message.author, "guild_permissions", None), "administrator", False)):

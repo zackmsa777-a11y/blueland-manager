@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Publish tested GitHub main to the bot; the bot and its editor have read-only access."""
 import datetime
+import fcntl
 import json
 import pathlib
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.request
@@ -58,15 +60,17 @@ def activate(path):
     raise RuntimeError("Discord readiness timed out")
 
 
-def publish():
+def publish(expected=None):
     previous = CURRENT.resolve(strict=True)
     active = version(previous)
     target = ""
     try:
-        report("checking", active, target)
         target = output(GIT + ["ls-remote", "--exit-code", REPO, "refs/heads/main"]).split()[0]
         if not re.fullmatch(r"[0-9a-f]{40}", target):
             raise ValueError("Invalid main revision")
+        if expected and target != expected:
+            raise ValueError("GitHub main changed after review")
+        report("checking", active, target)
         destination = ROOT / target
         if previous == destination:
             report("current", active, target)
@@ -88,7 +92,7 @@ def publish():
                 tree.rename(destination)
         report("activating", active, target)
     except Exception:
-        report("failed", active, target)
+        report("failed", active, expected or target)
         raise
     try:
         activate(destination)
@@ -104,4 +108,9 @@ def publish():
 
 
 if __name__ == "__main__":
-    publish()
+    expected = sys.argv[1] if len(sys.argv) > 1 else ""
+    if expected and not re.fullmatch(r"[0-9a-f]{40}", expected):
+        raise SystemExit("Invalid reviewed revision")
+    with (ROOT / ".release.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        publish(expected)

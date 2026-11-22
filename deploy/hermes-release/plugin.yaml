@@ -1,0 +1,5 @@
+name: blueland-release
+version: "1.0.0"
+description: Inspect and publish the reviewed main branch of BlueLand Manager.
+provides_tools:
+  - blueland_release

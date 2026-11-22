@@ -7,7 +7,9 @@ group_sessions_per_user: true
 thread_sessions_per_user: true
 platform_toolsets:
   cli: [memory, todo]
-  discord: [memory, todo, discord, discord_admin]
+  discord: [memory, todo, discord, discord_admin, blueland_release]
+plugins:
+  enabled: [blueland-release]
 discord:
   require_mention: true
   auto_thread: false
