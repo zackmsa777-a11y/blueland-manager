@@ -37,7 +37,13 @@ const commands=[
     sub('close','أغلق الكتابة واحتفظ بسجل التذكرة'),sub('reopen','أعد فتح التذكرة الحالية')
   ]),
   cmd('rank','اعرض مستوى النشاط',[option(6,'member','العضو، أو اتركه فارغًا لعرض مستواك',false)]),
-  cmd('top','اعرض الأعضاء الأكثر نشاطًا')
+  cmd('top','اعرض الأعضاء الأكثر نشاطًا'),
+  cmd('game','ابدأ لعبة جماعية في الروم الحالي',[
+    sub('roulette','ابدأ جولة روليت لاختيار فائز'),
+    sub('chairs','ابدأ جولة كراسي موسيقية'),
+    sub('mafia','ابدأ جولة مافيا بأدوار سرية'),
+    sub('rps','ابدأ تحدي حجر ورقة مقص')
+  ])
 ];
 const chatAliases={
   'تخفيض':'demote','بنق':'ping','مساعدة':'help','اوامر':'help','أوامر':'help','رولات':'roles','سيرفر':'server','مستوى':'rank','توب':'top',
@@ -51,6 +57,7 @@ const helpText=[
   'الإشراف · /warn، /warnings، /unwarn، /mute، /unmute، /timeout، /untimeout، /lock، /unlock، /kick، /ban، /unban',
   'الطلبات · /request submit للتقديم، /request status لمتابعة القرار',
   'الدعم · /ticket create لفتح تذكرة خاصة ثم claim أو close من داخلها',
+  'الألعاب · /game roulette، /game chairs، /game mafia، /game rps',
   'السيرفر · /roles، /server، /ping، /rank، /top'
 ].join('\n');
 function parseChat(text) {
