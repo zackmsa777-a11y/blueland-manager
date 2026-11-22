@@ -76,7 +76,19 @@ function cardMessage(card, description) {
 }
 
 const {rouletteTargets} = require('./game-rules');
-const {renderRouletteSpin} = require('./game-card');
+const {renderRouletteSpin, renderRouletteLobby, renderRouletteResult} = require('./game-card');
+
+function rouletteLobby(game) {
+  const count = `(${game.players.size} / ${games.roulette.max})`;
+  const display = (action, label, emoji, style = 2) => ({...button(game, action, label, style), emoji: {name: emoji}});
+  return {
+    content: `**${count}**`, allowedMentions: {parse: []},
+    files: [{attachment: renderRouletteLobby(game.rouletteBanner), name: 'roulette.png', description: `روليت BlueLand · التسجيل مفتوح ${count}`}],
+    embeds: [{image: {url: 'attachment://roulette.png'}}],
+    components: [row([display('join', 'دخول', '➕'), display('leave', 'خروج', '🚪'),
+      display('start', 'ابدأ', '▶️', 1), display('cancel', 'إلغاء', '✖️')])]
+  };
+}
 
 function roulettePanel(game) {
   const title = games.roulette.name;
@@ -98,12 +110,16 @@ function roulettePanel(game) {
     const footer = game.lastOut ? `خرج ${getName(game, game.lastOut)}` : 'العجلة تدور لاختيار لاعب';
     return {
       content: null, allowedMentions, components: [row([cancel])],
-      files: [{attachment: renderRouletteSpin(items.length, selected), name: 'roulette-spin.gif', description: `${turn} · ${footer}`}],
+      files: [{attachment: renderRouletteSpin(items.map(item => item.label), selected), name: 'roulette-spin.gif', description: `${turn} · ${footer}`}],
       embeds: [{title: `${title} · ${turn}`, description: footer, image: {url: 'attachment://roulette-spin.gif'}}]
     };
   }
   const footer = 'اختر لاعبًا يخرج، أو انسحب، أو اختر عشوائيًا';
-  const spinResult = cardMessage({game: 'roulette', title, subtitle: turn, footer, items, selected}, `${title} · ${turn} · ${footer}`);
+  const spinResult = {
+    files: [{attachment: renderRouletteResult(items.map(item => item.label), selected, game.rouletteAvatar),
+      name: 'roulette.png', description: `${title} · ${turn} · ${footer}`}],
+    embeds: [{image: {url: 'attachment://roulette.png'}}]
+  };
   const action = (id, label, style, emoji) => ({...button(game, id, label, style), emoji: {name: emoji}});
   return {...spinResult, content: `<@${game.roulettePlayer}> وقفت العجلة عليك! اختار خلال 20 ثانية.`, allowedMentions,
     components: [row([action('roulette-kick', 'إخراج لاعب', 1, '⭐'), action('roulette-leave', 'انسحاب', 4, '🚪'),
@@ -117,6 +133,7 @@ function rouletteMenu(game) {
 }
 
 function gamePanel(game) {
+  if (game.kind === 'roulette' && game.phase === 'lobby') return rouletteLobby(game);
   if (game.kind === 'roulette' && (game.phase === 'play' || game.phase === 'done')) return roulettePanel(game);
   const title = games[game.kind].name;
   const {subtitle, footer} = cardDetails(game);

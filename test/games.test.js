@@ -7,12 +7,12 @@ const {commands} = require('../src/commands');
 const {createDiscordGames} = require('../src/discord-games');
 const {games} = require('../src/game-rules');
 
-function assertPng(file, kind) {
+function assertPng(file, kind, size = [820, kind === 'rps' ? 500 : 720]) {
   const data = file.attachment;
   assert.equal(file.name, kind + '.png');
   assert.equal(data.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
   assert.equal(data.subarray(12, 16).toString(), 'IHDR');
-  assert.deepEqual([data.readUInt32BE(16), data.readUInt32BE(20)], [820, kind === 'rps' ? 500 : 720]);
+  assert.deepEqual([data.readUInt32BE(16), data.readUInt32BE(20)], size);
   assert.equal(data.subarray(-8, -4).toString(), 'IEND');
 }
 
@@ -98,14 +98,19 @@ function assertSpin(file) {
   assert.equal(data.toString('ascii', 0, 6), 'GIF89a');
   let index = 13 + 3 * (2 ** ((data[10] & 7) + 1));
   let frames = 0;
+  let firstFrameData;
   while (data[index] === 0x21) {
-    assert.deepEqual([...data.subarray(index, index + 4)], [0x21, 0xf9, 4, 4]);
+    assert.deepEqual([...data.subarray(index, index + 4)], [0x21, 0xf9, 4, 9]);
     index += 8;
     assert.equal(data[index], 0x2c);
-    assert.equal(data.readUInt16LE(index + 5), 224);
-    assert.equal(data.readUInt16LE(index + 7), 224);
+    assert.equal(data.readUInt16LE(index + 5), 344);
+    assert.equal(data.readUInt16LE(index + 7), 344);
     index += 11;
+    const imageStart = index;
     while (data[index]) index += 1 + data[index];
+    const imageData = data.subarray(imageStart, index);
+    if (frames === 0) firstFrameData = imageData;
+    if (frames === 17) assert.notDeepEqual(imageData, firstFrameData);
     index++;
     frames++;
   }
@@ -117,10 +122,11 @@ function assertSpin(file) {
 test('roulette spins, pings only the selected player, validates removal and crowns the winner', async t => {
   const f = fixture(t);
   await f.open('roulette');
-  assertPng(f.panel.files[0], 'roulette');
-  assert.equal(f.panel.content, undefined);
+  assertPng(f.panel.files[0], 'roulette', [840, 290]);
+  assert.equal(f.panel.content, `**(1 / ${games.roulette.max})**`);
   const oldJoin = f.button('join').custom_id;
   await f.click(guest, 'join');
+  assert.equal(f.panel.content, `**(2 / ${games.roulette.max})**`);
   await f.click(host, 'start');
   assertSpin(f.panel.files[0]);
   assert.equal(f.pings.length, 0);
@@ -128,7 +134,7 @@ test('roulette spins, pings only the selected player, validates removal and crow
   assert.equal(stale.flags, MessageFlags.Ephemeral);
   assert.match(stale.content, /انتهت/);
   await f.tick();
-  assertPng(f.panel.files[0], 'roulette');
+  assertPng(f.panel.files[0], 'roulette', [440, 440]);
   const player = f.panel.content.match(/<@(\d+)>/)[1];
   const other = player === host ? guest : host;
   assert.equal(f.pings.length, 1);

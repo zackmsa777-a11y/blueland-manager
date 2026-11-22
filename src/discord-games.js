@@ -6,6 +6,7 @@ const {RuleError} = require('./ladder');
 const {games, moves, createGame, start, eligiblePlayers, choose, ready, advance,
   spinRoulette, stopRoulette, resolveRoulette} = require('./game-rules');
 const {gamePanel, privateRole, voteMenu, rouletteMenu} = require('./game-view');
+const {rouletteBanner, rouletteAvatar} = require('./roulette-media');
 
 const privateReply = {flags: MessageFlags.Ephemeral, allowedMentions: {parse: []}};
 const durations = {lobby: 180_000, chairs: 9_000, mafia: 35_000, rps: 25_000};
@@ -64,6 +65,11 @@ function createDiscordGames() {
   function startSpin(game) {
     spinRoulette(game);
     const turn = game.round;
+    const picked = game.roulettePlayer;
+    game.rouletteAvatar = null;
+    void rouletteAvatar(game.avatars.get(picked)).then(avatar => {
+      if (active(game) && game.round === turn && game.roulettePlayer === picked) game.rouletteAvatar = avatar;
+    });
     publish(game).then(() => {
       if (!active(game) || game.round !== turn || game.rouletteStage !== 'spin') return;
       rouletteTimer(game, 2_000, () => revealSpin(game));
@@ -143,6 +149,7 @@ function createDiscordGames() {
     rooms.set(game.room, game);
     try {
       await i.deferReply();
+      if (kind === 'roulette') game.rouletteBanner = await rouletteBanner(i.client);
       game.message = await i.editReply(gamePanel(game));
       if (active(game)) schedule(game);
     } catch (err) {
