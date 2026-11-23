@@ -15,8 +15,15 @@ function createMessageHandler({ authorize, service, store, publicOrigin, run, pa
         return;
       }
       const {autoReply}=require('../config/discord-features.json');
-      if (autoReply?.author === message.author.id && autoReply.trigger === text) {
-        await reply(autoReply.content);
+      if (autoReply?.author === message.author.id && autoReply.trigger === text &&
+          !message.attachments?.size && !message.stickers?.size) {
+        try {
+          const posted = await message.channel.send({content:autoReply.content, allowedMentions:{parse:[]}});
+          const confirmed = await message.channel.messages.fetch({message:posted.id, force:true, cache:false});
+          if (confirmed?.id === posted.id) await message.delete();
+        } catch (err) {
+          console.warn('BlueLand auto-reply could not finish:', err.code || err.name);
+        }
         return;
       }
       if (!text.startsWith('+')) {
