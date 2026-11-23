@@ -19,12 +19,18 @@ function setup(t) {
   const db=store.community;
   const calls=[], posts=new Collection();
   let panelPayload;
+  function panelPost(payload) {
+    panelPayload=payload;
+    const components=payload.components.map(row=>new ActionRowBuilder().addComponents(row.components.map(button=>new ButtonBuilder(button))).toJSON());
+    const post={id:panelMessage,author:{id:bot},content:payload.content || '',embeds:payload.embeds || [],components,
+      async edit(edited) {calls.push(['edit-panel',panelMessage]);return panelPost(edited);}};
+    posts.set(post.id,post);
+    return post;
+  }
   const panelChannel={id:PANEL,guildId:catalog.guildId,type:ChannelType.GuildText,
     messages:{async fetch(options) { if (!options.message) return posts; const post=posts.get(options.message); if (!post) throw Object.assign(new Error('unknown message'),{code:10008});return post; }},
     async send(payload) {
-      panelPayload=payload;
-      const components=payload.components.map(row=>new ActionRowBuilder().addComponents(row.components.map(button=>new ButtonBuilder(button))).toJSON());
-      const post={id:panelMessage,author:{id:bot},components};posts.set(post.id,post);calls.push(['panel']);return post;
+      calls.push(['panel']);return panelPost(payload);
     }};
   const guild={client:{user:{id:bot}},channels:{async fetch(id) {assert.equal(id,PANEL);return panelChannel;}}};
   const gateway={
@@ -56,6 +62,25 @@ test('the verified Discord panel is published once, including after a new contro
   assert.equal(await createDiscordTickets({db:f.db,community:f.community,readyGuild:f.readyGuild}).syncPanel(),panelMessage);
   assert.deepEqual(f.calls,[['panel']]);
   assert.equal(f.panel().components[0].components[0].label,'للدعم الفني');
+  assert.equal(f.posts.get(panelMessage).content,'');
+  assert.equal(f.posts.get(panelMessage).embeds[0].title,'🎫 مركز تذاكر BlueLand');
+});
+
+test('an existing plain-text ticket panel becomes an Embed in the same message',async t=>{
+  const f=setup(t);
+  await f.tickets.syncPanel();
+  const old=f.posts.get(panelMessage);
+  old.embeds=[];
+  old.content='لوحة التذاكر القديمة';
+  assert.equal(await f.tickets.syncPanel(),panelMessage);
+  assert.equal(await f.tickets.syncPanel(),panelMessage);
+  assert.deepEqual(f.calls,[['panel'],['edit-panel',panelMessage]]);
+  assert.equal(f.posts.size,1);
+  assert.equal(f.posts.get(panelMessage).content,'');
+  assert.equal(f.posts.get(panelMessage).embeds[0].title,'🎫 مركز تذاكر BlueLand');
+  const press=f.interaction('blticket:choose');
+  await f.tickets.interaction(press);
+  assert.deepEqual(press.out[0].components[0].components.map(x=>x.label),['الدعم الفني','شكوى على إداري']);
 });
 
 test('the real button handler opens exactly two private options and serializes a valid Discord form',async t=>{

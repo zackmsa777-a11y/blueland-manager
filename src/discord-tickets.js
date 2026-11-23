@@ -19,15 +19,22 @@ function createDiscordTickets({db,community,readyGuild,now}) {
       if (channel?.id!==ui.PANEL || channel.guildId!==catalog.guildId || channel.type!==ChannelType.GuildText) throw new RuleError('قناة لوحة التذاكر غير متاحة.',404);
       const belongs=m=>m?.author?.id===guild.client.user.id && ui.isPanel(m);
       const get=message=>channel.messages.fetch({message,force:true,cache:false}).catch(err=>{if(err.code===10008)return null;throw err;});
+      const payload=ui.panel();
+      const [expected]=payload.embeds;
+      const matches=m=>belongs(m) && m.content==='' && m.embeds?.length===1 &&
+        m.embeds[0].title===expected.title && m.embeds[0].description===expected.description && m.embeds[0].color===expected.color;
       const id=db.panelMessage();
-      if (id && belongs(await get(id))) return id;
-      const recent=await channel.messages.fetch({limit:50,cache:false});
-      const existing=recent.find(belongs);
-      if (existing) { db.savePanelMessage(existing.id); return existing.id; }
-      const posted=await channel.send(ui.panel());
-      if (!belongs(await get(posted.id))) throw new RuleError('تعذّر التحقق من نشر لوحة التذاكر.',503);
-      db.savePanelMessage(posted.id);
-      return posted.id;
+      const saved=id?await get(id):null;
+      const existing=belongs(saved)?saved:(await channel.messages.fetch({limit:50,cache:false})).find(belongs);
+      if (existing && matches(existing)) {
+        if (existing.id!==id) db.savePanelMessage(existing.id);
+        return existing.id;
+      }
+      const posted=existing?await existing.edit(payload):await channel.send(payload);
+      const target=existing?.id ?? posted.id;
+      if (!matches(await get(target))) throw new RuleError('تعذّر التحقق من لوحة التذاكر.',503);
+      db.savePanelMessage(target);
+      return target;
     })().finally(()=>{syncing=null;});
     return syncing;
   }
