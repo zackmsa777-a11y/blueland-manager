@@ -14,6 +14,11 @@ function createMessageHandler({ authorize, service, store, publicOrigin, run, pa
         if (run && ['+بنق','+ping','+مساعدة','+help'].includes(text)) await reply(await run({action:parse(text).action,actor:message.author.id}));
         return;
       }
+      const {autoReply}=require('../config/discord-features.json');
+      if (autoReply?.author === message.author.id && autoReply.trigger === text) {
+        await reply(autoReply.content);
+        return;
+      }
       if (!text.startsWith('+')) {
         if (shortcuts && await shortcuts(message,text)) return;
         if (text && store.community?.settings().levels) store.community.addXp(message.author.id,message.createdTimestamp);
