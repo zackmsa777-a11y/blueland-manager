@@ -40,6 +40,8 @@ test('technical ticket posts the two intended mentions after confirming private 
   assert.ok(p.get(SUPPORT).allow.has(P.ViewChannel));
   assert.match(f.posts[0].content,new RegExp(`<@${opener}> & <@&${SUPPORT}>`));
   assert.match(f.posts[0].content,/الرجاء انتظار الطاقم وعدم الإزعاج/u);
+  assert.equal(f.posts[0].content.match(/حياك الله/gu)?.length,1);
+  assert.doesNotMatch(f.posts[0].content,/بدون منشن/u);
   assert.deepEqual(f.posts[0].allowedMentions,{parse:[],users:[opener],roles:[SUPPORT]});
   await f.gateway.ticketRoom(row,{});
   assert.equal(f.posts.length,1);
@@ -51,6 +53,17 @@ test('complaint has no support role overwrite and never pings the support role',
   await f.gateway.ticketRoom(row,{supportRole:SUPPORT});
   assert.deepEqual([...f.getRoom().permissionOverwrites.cache.keys()],[guildId,opener,bot]);
   assert.deepEqual(f.posts[0].allowedMentions,{parse:[],users:[opener,owner],roles:[]});
+  assert.match(f.posts[0].content,/حياك الله/u);
+});
+
+test('slash-created tickets welcome the opener once without adding a staff ping',async()=>{
+  const f=fixture();
+  const ticket={id:1,owner:opener,kind:'legacy',subject:'موضوع'};
+  await f.gateway.ticketRoom(ticket,{supportRole:SUPPORT});
+  await f.gateway.ticketRoom(ticket,{supportRole:SUPPORT});
+  assert.equal(f.posts.length,1);
+  assert.match(f.posts[0].content,/حياك الله/u);
+  assert.deepEqual(f.posts[0].allowedMentions,{parse:[],users:[opener],roles:[]});
 });
 
 test('closing a ticket does not restore access for a guest whose Discord grant was removed',async()=>{

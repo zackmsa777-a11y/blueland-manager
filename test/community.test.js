@@ -186,8 +186,17 @@ test('private tickets only let staff claim, honor one open ticket and preserve t
 });
 test('ticket creation sends private member, bot and support overwrites in the channel creation request',async t=>{
   const h=fixture(t);const created=[];const s=h.store.community.settings();
+  const {ChannelType,Collection,PermissionsBitField}=require('discord.js');
+  let room;
   const guild={id:catalog.guildId,client:{user:{id:catalog.botId}},roles:{fetch:async()=>({id:s.supportRole,managed:false})},
-    channels:{fetch:async()=>({find:()=>null}),create:async opts=>{created.push(opts);return {id:channel};}}};
+    channels:{async fetch(id) {return id?room:new Collection();},async create(opts) {
+      created.push(opts);
+      const cache=new Collection(opts.permissionOverwrites.map(r=>[r.id,{allow:new PermissionsBitField(r.allow),deny:new PermissionsBitField(r.deny)}]));
+      let post;
+      room={id:channel,guildId:catalog.guildId,type:ChannelType.GuildText,topic:opts.topic,permissionOverwrites:{cache},
+        messages:{async fetch(options) {return options.message?post:new Collection();}},async send(payload) {return post={id:'welcome',...payload};}};
+      return room;
+    }}};
   const gateway=communityGateway(()=>guild,h.g.context);
   assert.equal(await gateway.ticketRoom({id:5,owner:member,subject:'خاص'},s),channel);
   const rules=created[0].permissionOverwrites;

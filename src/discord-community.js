@@ -97,7 +97,7 @@ function communityGateway(readyGuild,context) {
       const supportRole=row.kind==='complaint'?'':row.kind==='technical'?ui.SUPPORT:settings.supportRole;
       const channels=await guild.channels.fetch();
       let room=channels.find(c=>c?.topic?.split('\n')[0]===marker && c.type===ChannelType.GuildText);
-      const existing=Boolean(room);
+
       if (!room) {
         await validateSettings({...settings,supportRole,welcomeChannel:''});
         const overwrites=[
@@ -109,28 +109,31 @@ function communityGateway(readyGuild,context) {
         room=await guild.channels.create({name:'ticket-'+row.id,type:ChannelType.GuildText,parent:settings.ticketCategory || undefined,
           topic:marker+'\n'+(typed?ui.kinds[row.kind]:row.subject),permissionOverwrites:overwrites,reason:'BlueLand support ticket '+row.id});
       }
-      if (typed) room=await getChannel(room.id);
-      if (existing || typed) {
-        const overwrites=room.permissionOverwrites.cache;
-        const privacy=overwrites.get(guild.id)?.deny.has(P.ViewChannel) && overwrites.get(row.owner)?.allow.has(P.ViewChannel);
-        const foreign=typed && [...overwrites.values()].some(o=>o.id!==guild.id && o.id!==row.owner && o.id!==guild.client.user.id && o.id!==supportRole && o.allow.has(P.ViewChannel));
-        if (!privacy || foreign || (typed && supportRole && !overwrites.get(supportRole)?.allow.has(P.ViewChannel))) {
-          throw new RuleError('خصوصية قناة التذكرة تغيّرت. راجع القناة قبل استكمالها.',409);
-        }
+      room=await getChannel(room.id);
+      const overwrites=room.permissionOverwrites.cache;
+      const privacy=room.topic?.split('\n')[0]===marker && overwrites.get(guild.id)?.deny.has(P.ViewChannel) && overwrites.get(row.owner)?.allow.has(P.ViewChannel);
+      const foreign=typed && [...overwrites.values()].some(o=>o.id!==guild.id && o.id!==row.owner && o.id!==guild.client.user.id && o.id!==supportRole && o.allow.has(P.ViewChannel));
+      if (!privacy || foreign || (typed && supportRole && !overwrites.get(supportRole)?.allow.has(P.ViewChannel))) {
+        throw new RuleError('خصوصية قناة التذكرة تغيّرت. راجع القناة قبل استكمالها.',409);
       }
-      if (typed) {
-        try {
-          const posts=await room.messages.fetch({limit:25,cache:false});
-          const already=posts.some(m=>m.author.id===guild.client.user.id && m.components.some(r=>r.components.some(b=>b.customId==='blticket:claim:'+row.id)));
-          if (!already) {
-            const team=supportRole?`<@&${supportRole}>`:`<@${guild.ownerId}>`;
-            const intro=await room.send({content:`<@${row.owner}> & ${team}\n**🎫 ${ui.kinds[row.kind]} · #${row.id}**\nالرجاء انتظار الطاقم وعدم الإزعاج.\nاكتب سؤالك هون بدون منشن. لا تشارك كلمات سر أو رموز تحقق.\n\n**الموضوع:** ${escapeMarkdown(row.subject)}\n**التفاصيل:** ${escapeMarkdown(row.details)}`,
-              allowedMentions:{parse:[],users:[...new Set([row.owner,...(supportRole?[]:[guild.ownerId])])],roles:supportRole?[supportRole]:[]},components:ui.controls(row.id)});
-            await room.messages.fetch({message:intro.id,force:true,cache:false});
-          }
-        } catch(err) {
-          throw new RuleError('بانتظار تجهيز رسالة التذكرة. جرّب بعد لحظة.',503);
+      try {
+        const posts=await room.messages.fetch({limit:25,cache:false});
+        const greeting=`حياك الله <@${row.owner}>.`;
+        const advice='الرجاء انتظار الطاقم وعدم الإزعاج. لا تشارك كلمات سر أو رموز تحقق.';
+        const legacyWelcome=`${greeting}\n**🎫 تذكرة دعم · #${row.id}**\n${advice}`;
+        const already=posts.some(m=>m.author.id===guild.client.user.id && (typed
+          ? m.components.some(r=>r.components.some(b=>b.customId==='blticket:claim:'+row.id))
+          : m.content===legacyWelcome));
+        if (!already) {
+          const team=supportRole?`<@&${supportRole}>`:`<@${guild.ownerId}>`;
+          const intro=await room.send(typed ? {
+            content:`<@${row.owner}> & ${team}\n**🎫 ${ui.kinds[row.kind]} · #${row.id}**\nحياك الله! ${advice}\n\n**الموضوع:** ${escapeMarkdown(row.subject)}\n**التفاصيل:** ${escapeMarkdown(row.details)}`,
+            allowedMentions:{parse:[],users:[...new Set([row.owner,...(supportRole?[]:[guild.ownerId])])],roles:supportRole?[supportRole]:[]},components:ui.controls(row.id)
+          } : {content:legacyWelcome,allowedMentions:{parse:[],users:[row.owner],roles:[]},components:[]});
+          await room.messages.fetch({message:intro.id,force:true,cache:false});
         }
+      } catch(err) {
+        throw new RuleError('بانتظار تجهيز رسالة التذكرة. جرّب بعد لحظة.',503);
       }
       return room.id;
     } catch(err) { discordFailure(err); }
