@@ -76,6 +76,7 @@ function cardMessage(card, description) {
 }
 
 const {rouletteChoice, rouletteNotice} = require('./roulette-round');
+const {lobbyCountdown} = require('./roulette-lobby');
 const {renderRouletteSpin, renderRouletteLobby, renderRouletteResult, renderRouletteWinner} = require('./game-card');
 
 function withRouletteEmoji(game, key, control) {
@@ -93,8 +94,9 @@ const rouletteEconomyButtons = game => row([
 
 function rouletteLobby(game, includeImage) {
   const count = `(${game.players.size} / ${games.roulette.max})`;
+  const timer = Number.isFinite(game.lobbyDeadline) ? `\n⏳ ينتهي التسجيل بعد **${lobbyCountdown(game.lobbyDeadline)}**` : '';
   return {
-    content: `**${count}**`, allowedMentions: {parse: []},
+    content: `**${count}**${timer}`, allowedMentions: {parse: []},
     ...(includeImage ? {files: [{attachment: game.rouletteBanner || renderRouletteLobby(), name: 'roulette.png',
       description: 'روليت BlueLand · التسجيل مفتوح'}]} : {}),
     components: [row([rouletteButton(game, 'join', 'دخول'), rouletteButton(game, 'leave', 'خروج'),

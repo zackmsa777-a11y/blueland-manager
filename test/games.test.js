@@ -138,7 +138,7 @@ test('roulette posts the wheel phases separately, pings only the selected player
   const [lobby] = f.posts;
   const banner = f.panel.files[0];
   assertPng(banner, 'roulette', [840, 290]);
-  assert.equal(f.panel.content, `**(1 / ${games.roulette.max})**`);
+  assert.equal(f.panel.content.split('\n')[0], `**(1 / ${games.roulette.max})**`);
   assert.deepEqual(f.button('join').emoji, {id: '100000000000000010', name: 'roulette_join', animated: true});
   assert.equal(f.button('cancel').emoji.id, '100000000000000011');
   assert.ok(f.panel.components.flatMap(row => row.components).every(button => button.emoji.id));
@@ -146,7 +146,7 @@ test('roulette posts the wheel phases separately, pings only the selected player
   await f.click(guest, 'join');
   assert.equal(f.posts.length, 1);
   assert.equal(f.panel.files[0], banner);
-  assert.equal(f.panel.content, `**(2 / ${games.roulette.max})**`);
+  assert.equal(f.panel.content.split('\n')[0], `**(2 / ${games.roulette.max})**`);
   await f.click(host, 'start');
   assert.equal(f.posts.length, 2);
   const spin = f.posts[1];
@@ -216,7 +216,7 @@ test('roulette caps at 160, paginates 159 opponents, and keeps one 50-second dea
   t.mock.method(Date, 'now', () => now);
   await f.open('roulette');
   for (let n = 1; n < 160; n++) await f.click(String(BigInt(host) + BigInt(n)), 'join');
-  assert.equal(f.panel.content, '**(160 / 160)**');
+  assert.equal(f.panel.content.split('\n')[0], '**(160 / 160)**');
   const outsider = '200000000000000001';
   assert.match((await f.click(outsider, 'join')).content, /اكتمل/);
   await f.click(host, 'start');

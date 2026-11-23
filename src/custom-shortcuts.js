@@ -60,7 +60,9 @@ function openShortcuts(db) {
     if (!text || /^[+/]/u.test(text)) return null;
     if (text.startsWith('.')) {
       const spec=dotGameCommands.get(text);
-      return spec ? {phrase:text,spec,args:''} : null;
+      if (spec) return {phrase:text,spec,args:''};
+      const timed=/^(\.روليت)\s+([+\-\d][\s\S]*)$/u.exec(text);
+      return timed ? {phrase:timed[1],spec:dotGameCommands.get(timed[1]),args:timed[2]} : null;
     }
     // Do not normalize free-form arguments (e.g. a reason) entered by the user.
     const words=[...text.matchAll(/\S+/gu)];
@@ -99,6 +101,10 @@ function usage({phrase,spec}) {
 function parseShortcut(hit) {
   const {spec,args}=hit;
   const fail=()=>{throw new RuleError(usage(hit));};
+  if(hit.phrase==='.روليت'&&spec.action==='game'&&args) {
+    const {parseLobbyDuration}=require('./roulette-lobby');
+    return {action:'game',sub:'roulette',lobbyMs:parseLobbyDuration(args)};
+  }
   if(spec.action==='promote'||spec.action==='demote'){
     try{return {action:spec.action,...parseRankChangeArgs(args?args.split(/\s+/u):[],hit.phrase)};}catch(err){if(err instanceof RuleError)return fail();throw err;}
   }

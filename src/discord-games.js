@@ -8,6 +8,7 @@ const {games, moves, createGame, start, eligiblePlayers, choose, ready, advance,
   spinRoulette, stopRoulette, resolveRoulette} = require('./game-rules');
 const {gamePanel, privateRole, voteMenu} = require('./game-view');
 const {CHOICE_MS, roulettePage, rouletteChoice} = require('./roulette-round');
+const {DEFAULT_LOBBY_MS, lobbyRefreshDelay} = require('./roulette-lobby');
 const {rouletteBanner, rouletteAvatar, rouletteBackdrop} = require('./roulette-media');
 const {rouletteEmojis} = require('./roulette-emoji');
 const {shopPanel} = require('./roulette-shop');
@@ -154,6 +155,18 @@ function createDiscordGames(economy) {
   function schedule(game) {
     clearTimeout(game.timer);
     const lobby = game.phase === 'lobby';
+    if (lobby && game.kind === 'roulette') {
+      const remaining = game.lobbyDeadline - Date.now();
+      if (remaining <= 0) return cancel(game, 'انتهت مهلة التسجيل.');
+      game.timer = setTimeout(() => {
+        if (!active(game) || game.phase !== 'lobby') return;
+        if (Date.now() >= game.lobbyDeadline) return cancel(game, 'انتهت مهلة التسجيل.');
+        publish(game);
+        schedule(game);
+      }, lobbyRefreshDelay(remaining));
+      game.timer.unref();
+      return;
+    }
     const music = !lobby && game.kind === 'chairs';
     const delay = lobby ? durations.lobby : music ? randomInt(3_000, 7_001) : durations[game.kind];
     game.music = music;
@@ -170,7 +183,7 @@ function createDiscordGames(economy) {
     game.timer.unref();
   }
 
-  async function open(i, kind) {
+  async function open(i, kind, lobbyMs = DEFAULT_LOBBY_MS) {
     if (!Object.hasOwn(games, kind)) throw new RuleError('اختر لعبة من أمر /game.');
     if (rooms.has(i.channelId)) throw new RuleError('في لعبة مفتوحة في الروم. انضم لها أو انتظر نهايتها.');
     const game = Object.assign(createGame(kind, i.user.id, playerName(i)), {
@@ -185,6 +198,7 @@ function createDiscordGames(economy) {
         game.rouletteBanner = banner;
         game.rouletteEmojis = emojis;
         game.rouletteBackdrop = backdrop;
+        game.lobbyDeadline = Date.now() + lobbyMs;
       }
       game.message = await i.editReply(gamePanel(game));
       if (active(game)) schedule(game);
@@ -205,6 +219,10 @@ function createDiscordGames(economy) {
       return fail('هذي اللوحة أو الجولة انتهت. استخدم اللوحة الحالية.');
     }
     const lobby = game.phase === 'lobby';
+    if (lobby && game.kind === 'roulette' && Date.now() >= game.lobbyDeadline) {
+      cancel(game, 'انتهت مهلة التسجيل.');
+      return fail('انتهت مهلة التسجيل.');
+    }
     if (action === 'cancel') {
       if (user !== game.host) return fail('مضيف اللعبة هو اللي يقدر يلغيها.');
       const ack = i.deferUpdate();
@@ -325,7 +343,7 @@ function createDiscordGames(economy) {
     return true;
   }
 
-  async function openShortcut(message,kind) {
+  async function openShortcut(message,kind,lobbyMs) {
     if (kind==='shop'||kind==='bag') {
       if (!economy) throw new RuleError('متجر الروليت غير متاح حاليًا.');
       try {await message.author.send({...shopPanel(kind,economy.profile(message.author.id)),allowedMentions:{parse:[]}});}
@@ -335,7 +353,7 @@ function createDiscordGames(economy) {
     return open({
       channelId:message.channelId,user:message.author,member:message.member,client:message.client,guild:message.guild,
       deferReply:async()=>{},editReply:payload=>message.reply({...payload,allowedMentions:{...payload.allowedMentions,repliedUser:false}})
-    },kind);
+    },kind,lobbyMs);
   }
 
   return {handle, openShortcut, removeMessage, removeRoom};

@@ -29,7 +29,7 @@ function createShortcutHandler({shortcuts, context, readyGuild, service, communi
     try {await preflight(spec,actor,channel);} catch {return true;}
     try {
       const input=parseShortcut(hit);
-      if(spec.action==='game'){await games.openShortcut(message,spec.sub);return true;}
+      if(spec.action==='game'){await games.openShortcut(message,spec.sub,input.lobbyMs);return true;}
       const output=await run({...input,actor,channel,delivery:'discord:'+message.id,created:message.createdTimestamp});
       if(['dashboard','warnings','request','ticket','rank','top'].includes(spec.action)) {
         try {await message.author.send({content:output,allowedMentions});}
