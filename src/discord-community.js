@@ -89,36 +89,117 @@ function communityGateway(readyGuild,context) {
   }
   async function ticketRoom(row,settings) {
     try {
+      const ui=require('./ticket-ui');
+      const {escapeMarkdown}=require('discord.js');
       const guild=readyGuild();
-      const marker='BlueLand ticket '+row.id+' • '+row.owner;
+      const marker=ui.marker(row);
+      const typed=Object.hasOwn(ui.kinds,row.kind);
+      const supportRole=row.kind==='complaint'?'':row.kind==='technical'?ui.SUPPORT:settings.supportRole;
       const channels=await guild.channels.fetch();
-      const existing=channels.find(c=>c?.topic?.split('\n')[0]===marker && c.type===ChannelType.GuildText);
-      if (existing) {
-        if (!existing.permissionOverwrites.cache.get(guild.id)?.deny.has(P.ViewChannel) ||
-            !existing.permissionOverwrites.cache.get(row.owner)?.allow.has(P.ViewChannel)) throw new RuleError('خصوصية قناة التذكرة تغيّرت. راجع القناة قبل استكمالها.',409);
-        return existing.id;
+      let room=channels.find(c=>c?.topic?.split('\n')[0]===marker && c.type===ChannelType.GuildText);
+      const existing=Boolean(room);
+      if (!room) {
+        await validateSettings({...settings,supportRole,welcomeChannel:''});
+        const overwrites=[
+          {id:guild.id,type:OverwriteType.Role,deny:[P.ViewChannel]},
+          {id:row.owner,type:OverwriteType.Member,allow:ticketRead | ticketWrite},
+          {id:guild.client.user.id,type:OverwriteType.Member,allow:ticketRead | ticketWrite | P.ManageChannels | P.ManageRoles}
+        ];
+        if (supportRole) overwrites.push({id:supportRole,type:OverwriteType.Role,allow:ticketRead | ticketWrite});
+        room=await guild.channels.create({name:'ticket-'+row.id,type:ChannelType.GuildText,parent:settings.ticketCategory || undefined,
+          topic:marker+'\n'+(typed?ui.kinds[row.kind]:row.subject),permissionOverwrites:overwrites,reason:'BlueLand support ticket '+row.id});
       }
-      await validateSettings({...settings,welcomeChannel:''});
-      const overwrites=[
-        {id:guild.id,type:OverwriteType.Role,deny:[P.ViewChannel]},
-        {id:row.owner,type:OverwriteType.Member,allow:ticketRead | ticketWrite},
-        {id:guild.client.user.id,type:OverwriteType.Member,allow:ticketRead | ticketWrite | P.ManageChannels | P.ManageRoles}
-      ];
-      if (settings.supportRole) overwrites.push({id:settings.supportRole,type:OverwriteType.Role,allow:ticketRead | ticketWrite});
-      const room=await guild.channels.create({name:'ticket-'+row.id,type:ChannelType.GuildText,parent:settings.ticketCategory || undefined,
-        topic:marker+'\n'+row.subject,permissionOverwrites:overwrites,reason:'BlueLand support ticket '+row.id});
+      if (typed) room=await getChannel(room.id);
+      if (existing || typed) {
+        const overwrites=room.permissionOverwrites.cache;
+        const privacy=overwrites.get(guild.id)?.deny.has(P.ViewChannel) && overwrites.get(row.owner)?.allow.has(P.ViewChannel);
+        const foreign=typed && [...overwrites.values()].some(o=>o.id!==guild.id && o.id!==row.owner && o.id!==guild.client.user.id && o.id!==supportRole && o.allow.has(P.ViewChannel));
+        if (!privacy || foreign || (typed && supportRole && !overwrites.get(supportRole)?.allow.has(P.ViewChannel))) {
+          throw new RuleError('خصوصية قناة التذكرة تغيّرت. راجع القناة قبل استكمالها.',409);
+        }
+      }
+      if (typed) {
+        try {
+          const posts=await room.messages.fetch({limit:25,cache:false});
+          const already=posts.some(m=>m.author.id===guild.client.user.id && m.components.some(r=>r.components.some(b=>b.customId==='blticket:claim:'+row.id)));
+          if (!already) {
+            const team=supportRole?`<@&${supportRole}>`:`<@${guild.ownerId}>`;
+            const intro=await room.send({content:`<@${row.owner}> & ${team}\n**🎫 ${ui.kinds[row.kind]} · #${row.id}**\nالرجاء انتظار الطاقم وعدم الإزعاج.\nاكتب سؤالك هون بدون منشن. لا تشارك كلمات سر أو رموز تحقق.\n\n**الموضوع:** ${escapeMarkdown(row.subject)}\n**التفاصيل:** ${escapeMarkdown(row.details)}`,
+              allowedMentions:{parse:[],users:[...new Set([row.owner,...(supportRole?[]:[guild.ownerId])])],roles:supportRole?[supportRole]:[]},components:ui.controls(row.id)});
+            await room.messages.fetch({message:intro.id,force:true,cache:false});
+          }
+        } catch(err) {
+          throw new RuleError('بانتظار تجهيز رسالة التذكرة. جرّب بعد لحظة.',503);
+        }
+      }
       return room.id;
     } catch(err) { discordFailure(err); }
   }
-  async function ticketWriting(row,write) {
+  async function verifiedTicket(row) {
+    const c=await getChannel(row.channel);
+    if (c.type!==ChannelType.GuildText || c.topic?.split('\n')[0]!==require('./ticket-ui').marker(row)) {
+      throw new RuleError('هوية قناة التذكرة لا تطابق السجل.',409);
+    }
+    return c;
+  }
+  async function ticketWriting(row,write,guests=[]) {
     try {
-      const c=await getChannel(row.channel);
-      if (c.type!==ChannelType.GuildText || !c.topic?.startsWith('BlueLand ticket '+row.id+' • '+row.owner+'\n')) throw new RuleError('هوية قناة التذكرة لا تطابق السجل.',409);
-      const overwrite=c.permissionOverwrites.cache.get(row.owner);
+      const c=await verifiedTicket(row);
       const mask=ticketWrite | writing;
-      const grant=((overwrite?.allow.bitfield || 0n) & ~mask) | ticketRead | (write?ticketWrite:0n);
-      const deny=((overwrite?.deny.bitfield || 0n) & ~(mask | ticketRead)) | (write?0n:mask);
-      await c.guild.client.rest.put(Routes.channelPermission(row.channel,row.owner),{reason:'BlueLand ticket '+row.id,body:{type:OverwriteType.Member,allow:String(grant),deny:String(deny)}});
+      // A manual Discord revocation must survive close/reopen; do not regrant visibility from an old guest record.
+      const visibleGuests=guests.filter(id=>c.permissionOverwrites.cache.get(id)?.allow.has(P.ViewChannel));
+      const changes=[row.owner,...visibleGuests].map(id=>{
+        const old=c.permissionOverwrites.cache.get(id);
+        return {id,type:OverwriteType.Member,allow:((old?.allow.bitfield || 0n) & ~mask) | ticketRead | (write?ticketWrite:0n),
+          deny:((old?.deny.bitfield || 0n) & ~(mask | ticketRead)) | (write?0n:mask)};
+      });
+      if (changes.length===1) {
+        const [{id,type,allow,deny}]=changes;
+        await c.guild.client.rest.put(Routes.channelPermission(row.channel,id),{reason:'BlueLand ticket '+row.id,body:{type,allow:String(allow),deny:String(deny)}});
+      } else {
+        const edited=new Set(changes.map(o=>o.id));
+        const preserved=[...c.permissionOverwrites.cache.values()].filter(o=>!edited.has(o.id))
+          .map(o=>({id:o.id,type:o.type,allow:o.allow.bitfield,deny:o.deny.bitfield}));
+        await c.permissionOverwrites.set([...preserved,...changes],'BlueLand ticket '+row.id);
+      }
+      if (row.kind==='technical' || row.kind==='complaint' || guests.length) {
+        const live=await verifiedTicket(row);
+        for (const change of changes) {
+          const check=live.permissionOverwrites.cache.get(change.id);
+          if (check?.allow.bitfield!==change.allow || check?.deny.bitfield!==change.deny) throw new RuleError('تعذّر التحقق من أذونات التذكرة.',503);
+        }
+      }
+    } catch(err) { discordFailure(err); }
+  }
+  async function editTicketRoom(row,action,target,alreadyGuest=false) {
+    try {
+      const room=await verifiedTicket(row);
+      const reason='BlueLand ticket '+row.id+' / '+action;
+      if (action==='rename') {
+        await room.setName(target,reason);
+        if ((await verifiedTicket(row)).name!==target) throw new RuleError('تعذّر التحقق من اسم التذكرة.',503);
+      } else if (action==='delete') {
+        await room.delete(reason);
+        if (await ticketPresent(row.channel)) throw new RuleError('تعذّر التحقق من حذف التذكرة.',503);
+      } else if (action==='add' || action==='remove') {
+        if (target===row.owner || target===room.guild.client.user.id) throw new RuleError('لا يمكن تغيير وصول صاحب التذكرة أو البوت.');
+        const old=room.permissionOverwrites.cache.get(target);
+        if (action==='add') {
+          if (old && !alreadyGuest) throw new RuleError('للعضو إذن مخصص هنا؛ لم تتغير أذوناته.',409);
+          const member=await room.guild.members.fetch({user:target,force:true,cache:false});
+          if (member.user.bot || room.permissionsFor(member)?.has(P.ViewChannel) && !alreadyGuest) throw new RuleError('هذا الحساب بوت أو لديه وصول مسبق للتذكرة.',409);
+          await room.permissionOverwrites.create(member,{ViewChannel:true,ReadMessageHistory:true,SendMessages:true,AttachFiles:true,EmbedLinks:true},{reason});
+          const check=(await verifiedTicket(row)).permissionOverwrites.cache.get(target);
+          if (!check?.allow.has(ticketRead | ticketWrite)) throw new RuleError('تعذّر التحقق من إضافة العضو.',503);
+        } else if (old) {
+          const mask=ticketRead | ticketWrite | writing;
+          const allow=old.allow.bitfield & ~mask, deny=old.deny.bitfield & ~mask;
+          if (allow || deny) await room.guild.client.rest.put(Routes.channelPermission(row.channel,target),{reason,body:{type:OverwriteType.Member,allow:String(allow),deny:String(deny)}});
+          else await room.permissionOverwrites.delete(target,reason);
+          const check=(await verifiedTicket(row)).permissionOverwrites.cache.get(target);
+          if (check && ((check.allow.bitfield | check.deny.bitfield) & mask)) throw new RuleError('تعذّر التحقق من إزالة وصول العضو.',503);
+        }
+      }
     } catch(err) { discordFailure(err); }
   }
   async function destinations() {
@@ -129,6 +210,6 @@ function communityGateway(readyGuild,context) {
   async function ticketPresent(id) {
     try { await getChannel(id); return true; } catch(err) { if (err instanceof RuleError && err.status===404) return false; throw err; }
   }
-  return {context,memberAction,roomPermission,ticketRoom,ticketWriting,ticketPresent,validateSettings,destinations};
+  return {context,memberAction,roomPermission,ticketRoom,ticketWriting,ticketPresent,editTicketRoom,validateSettings,destinations};
 }
 module.exports={communityGateway};

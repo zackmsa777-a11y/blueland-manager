@@ -127,7 +127,7 @@ function createApp({ store, discord, publicOrigin = '' }) {
           const viewer=await staff();
           const rights=viewer.rights || {};
           const db=store.community;
-          return json({rights,requests:rights.review?db.requests():[],tickets:rights.tickets?db.tickets():[],cases:rights.cases?db.cases():[],
+          return json({rights,requests:rights.review?db.requests():[],tickets:rights.tickets?db.tickets().filter(row=>row.kind==='complaint'?rights.complaintTickets:row.kind==='technical'?rights.technicalTickets:rights.legacyTickets):[],cases:rights.cases?db.cases():[],
             settings:rights.config?db.settings():null,channels:rights.config?await discord.destinations():[]});
         }
         if (route === '/api/catalog') return json(await discord.directory());

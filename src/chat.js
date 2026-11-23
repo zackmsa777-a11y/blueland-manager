@@ -2,7 +2,7 @@
 
 const { catalog, roles, RuleError, parsePromotion } = require('./ladder');
 
-function createMessageHandler({ authorize, service, store, publicOrigin, run, parse, shortcuts }) {
+function createMessageHandler({ authorize, service, store, publicOrigin, run, parse, shortcuts, ticketMessages }) {
   return async function onMessage(message) {
     if (message.author.bot || message.webhookId) return;
     const inGuild=message.inGuild();
@@ -14,6 +14,7 @@ function createMessageHandler({ authorize, service, store, publicOrigin, run, pa
         if (run && ['+بنق','+ping','+مساعدة','+help'].includes(text)) await reply(await run({action:parse(text).action,actor:message.author.id}));
         return;
       }
+      if (ticketMessages && await ticketMessages(message,text)) return;
       const {autoReply,roleAutoReply}=require('../config/discord-features.json');
       if (roleAutoReply?.trigger === text) {
         const member = await message.guild.members.fetch({user:message.author.id, force:true, cache:false}).catch(()=>null);

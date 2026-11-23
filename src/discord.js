@@ -75,7 +75,9 @@ function connectDiscord(store, env) {
   const run=commandRunner({store,community,promotions:service,readyGuild,pair,bulkRole});
   const shortcuts=createShortcutHandler({shortcuts:store.shortcuts,context,readyGuild,service,community,run,games,
     lookupTicket:channel=>store.community.ticketByChannel(channel)});
-  const onMessage=createMessageHandler({authorize:community.dashboard,service,store,publicOrigin:env.PUBLIC_ORIGIN,run,parse:parseChat,shortcuts});
+  const tickets=require('./discord-tickets').createDiscordTickets({db:store.community,community,readyGuild});
+  const onMessage=createMessageHandler({authorize:community.dashboard,service,store,publicOrigin:env.PUBLIC_ORIGIN,run,parse:parseChat,shortcuts,ticketMessages:tickets.text});
+  const syncTickets=()=>tickets.syncPanel().catch(err=>console.warn('BlueLand ticket panel:',err.code || err.message));
   let syncing=false;
   async function sync() {
     if (syncing || connection.slashReady===commands.length) return;
@@ -121,7 +123,7 @@ function connectDiscord(store, env) {
           return;
         }
         if (i.guildId!==catalog.guildId || (i.isChatInputCommand() && i.commandGuildId!==catalog.guildId)) return;
-        if (await games.handle(i)) return;
+        if (await tickets.interaction(i) || await games.handle(i)) return;
         if (!i.isChatInputCommand() || !commands.some(c=>c.name===i.commandName)) return;
         try {
           await i.deferReply({flags:api.MessageFlags.Ephemeral});
@@ -146,8 +148,9 @@ function connectDiscord(store, env) {
         connection = { code: 'online', text: 'البوت متصل', slashReady:0, slashTotal:commands.length, contentEnabled, membersEnabled };
         recover().catch(() => {});
         sync().catch(()=>{});
+        void syncTickets();
         clearInterval(timer);
-        timer = setInterval(() => { recover().catch(() => {}); sync().catch(()=>{}); }, 60_000);
+        timer = setInterval(() => { recover().catch(() => {}); sync().catch(()=>{}); void syncTickets(); }, 60_000);
         timer.unref();
       });
       client.on(api.Events.Error, () => {});

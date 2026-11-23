@@ -21,6 +21,10 @@ function openCommunityStore(db) {
     "CREATE TABLE IF NOT EXISTS server_xp (member TEXT PRIMARY KEY, xp INTEGER NOT NULL, last INTEGER NOT NULL)",
     "CREATE INDEX IF NOT EXISTS moderation_target ON moderation_cases(target,id)"
   ].join(';\n'));
+  const columns = new Set(db.prepare('PRAGMA table_info(support_tickets)').all().map(column=>column.name));
+  if (!columns.has('kind')) db.exec("ALTER TABLE support_tickets ADD COLUMN kind TEXT NOT NULL DEFAULT 'legacy'");
+  if (!columns.has('details')) db.exec("ALTER TABLE support_tickets ADD COLUMN details TEXT NOT NULL DEFAULT ''");
+  db.exec('CREATE TABLE IF NOT EXISTS support_ticket_guests (ticket INTEGER NOT NULL, member TEXT NOT NULL, PRIMARY KEY(ticket,member)); CREATE TABLE IF NOT EXISTS support_ticket_panel (id INTEGER PRIMARY KEY CHECK(id=1), message TEXT NOT NULL)');
 
   const request = id => db.prepare('SELECT * FROM staff_requests WHERE id=?').get(id);
   const ticket = id => db.prepare('SELECT * FROM support_tickets WHERE id=?').get(id);
@@ -63,12 +67,17 @@ function openCommunityStore(db) {
     },
     cancel(id,owner) { return db.prepare("UPDATE staff_requests SET state='cancelled',updated=? WHERE id=? AND owner=? AND state='pending'").run(Date.now(),id,owner).changes; },
     processing() { return db.prepare("SELECT * FROM staff_requests WHERE state='processing'").all(); },
-    reserveTicket(delivery,owner,subject) {
+    panelMessage() { return db.prepare('SELECT message FROM support_ticket_panel WHERE id=1').get()?.message; },
+    savePanelMessage(message) { db.prepare('INSERT INTO support_ticket_panel VALUES(1,?) ON CONFLICT(id) DO UPDATE SET message=excluded.message').run(message); },
+    ticketGuests(ticketId) { return db.prepare('SELECT member FROM support_ticket_guests WHERE ticket=?').all(ticketId).map(row=>row.member); },
+    rememberTicketGuest(ticketId,member) { db.prepare('INSERT OR IGNORE INTO support_ticket_guests VALUES(?,?)').run(ticketId,member); },
+    forgetTicketGuest(ticketId,member) { db.prepare('DELETE FROM support_ticket_guests WHERE ticket=? AND member=?').run(ticketId,member); },
+    reserveTicket(delivery,owner,subject,kind='legacy',details='') {
       const replay=db.prepare('SELECT * FROM support_tickets WHERE delivery=?').get(delivery);
       if (replay) return replay;
       const active=db.prepare("SELECT * FROM support_tickets WHERE owner=? AND state!='closed'").get(owner);
       if (active) return active;
-      const result=db.prepare("INSERT INTO support_tickets(delivery,owner,subject,state,created) VALUES(?,?,?,'opening',?)").run(delivery,owner,subject,Date.now());
+      const result=db.prepare("INSERT INTO support_tickets(delivery,owner,subject,state,created,kind,details) VALUES(?,?,?,'opening',?,?,?)").run(delivery,owner,subject,Date.now(),kind,details);
       return ticket(result.lastInsertRowid);
     },
     setChannel(id, channel) {

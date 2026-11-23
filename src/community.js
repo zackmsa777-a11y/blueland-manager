@@ -102,10 +102,13 @@ function createCommunity(store, gateway, promotions) {
     let review=true;
     try { promotions.checkOperator(ctx); } catch(err) { if (!(err instanceof RuleError)) throw err; review=false; }
     const config=permits(ctx,ctx.actor,P.ManageGuild);
-    const tickets=permits(ctx,ctx.actor,P.ManageChannels) || ctx.actor.roles.includes(db.settings().supportRole);
+    const legacyTickets=permits(ctx,ctx.actor,P.ManageChannels) || ctx.actor.roles.includes(db.settings().supportRole);
+    const complaintTickets=actor===ctx.ownerId;
+    const technicalTickets=complaintTickets || ctx.actor.roles.includes(require('./ticket-ui').SUPPORT);
+    const tickets=legacyTickets || technicalTickets;
     const cases=config || permits(ctx,ctx.actor,P.ModerateMembers) || ctx.actor.roles.includes(helper['#warn/unwarn']);
     if (ctx.actor.bot || !(review || tickets || cases || config)) throw new RuleError('دخول الطاقم يحتاج إلى رول مخوّل في BlueLand.',403);
-    return {id:actor,name:ctx.actor.name,rights:{review,config,tickets,cases}};
+    return {id:actor,name:ctx.actor.name,rights:{review,config,tickets,cases,legacyTickets,complaintTickets,technicalTickets}};
   }
   async function submit({actor,kind,body,delivery}) {
     if (!Object.hasOwn(kinds,kind)) throw new RuleError('اختر نوع طلب صالحًا.');
@@ -156,7 +159,7 @@ function createCommunity(store, gateway, promotions) {
       }
     } else if (row.state==='closing' || row.state==='reopening') {
       const closing=row.state==='closing';
-      try { await gateway.ticketWriting(row,!closing); }
+      try { await gateway.ticketWriting(row,!closing,db.ticketGuests(row.id)); }
       catch(err) {
         if (err instanceof RuleError && err.status===404) db.ticketRemoved(row.channel);
         else if (err instanceof RuleError && err.status===403) db.ticketState(row.id,row.state,closing?'open':'closed');
@@ -166,20 +169,30 @@ function createCommunity(store, gateway, promotions) {
     }
     return db.ticket(row.id);
   }
-  async function openTicket(actor,delivery,subject) {
+  async function openTicket(actor,delivery,subject,kind='legacy',details='') {
+    if (kind!=='legacy' && !Object.hasOwn(require('./ticket-ui').kinds,kind)) throw new RuleError('اختر نوع التذكرة من اللوحة.');
     const ctx=await gateway.context(actor);
     if (ctx.actor.bot) throw new RuleError('فتح التذاكر مخصص للأعضاء.',403);
     return exclusive('ticket:'+actor,async()=>{
-      const text=value(subject,200);
+      const text=value(subject,kind==='legacy'?200:120);
+      const body=kind==='legacy'?'':value(details,750);
       const previous=db.activeTicket(actor);
       if (previous?.channel && gateway.ticketPresent && !await gateway.ticketPresent(previous.channel)) db.ticketRemoved(previous.channel);
-      return finishTicket(db.reserveTicket(delivery,actor,text));
+      return finishTicket(db.reserveTicket(delivery,actor,text,kind,body));
     });
+  }
+  async function ticketStaff(actor,row) {
+    if (row.kind!=='technical' && row.kind!=='complaint') return support(actor);
+    const ctx=await gateway.context(actor);
+    if (ctx.actor.bot || (actor!==ctx.ownerId && (row.kind==='complaint' || !ctx.actor.roles.includes(require('./ticket-ui').SUPPORT)))) {
+      throw new RuleError('هذا الإجراء للطاقم المخوّل على هذه التذكرة فقط.',403);
+    }
+    return ctx;
   }
   async function ticketAction(actor,id,action) {
     const row=db.ticket(rowId(id));
     if (!row) throw new RuleError('التذكرة غير موجودة.',404);
-    if (action!=='close' || actor!==row.owner) await support(actor);
+    if (action!=='close' || actor!==row.owner) await ticketStaff(actor,row);
     return exclusive('ticket:'+row.owner,async()=>{
       const current=db.ticket(row.id);
       if (!current.channel) throw new RuleError('روم هذه التذكرة غير متاح. افتح تذكرة جديدة.',409);
@@ -193,6 +206,30 @@ function createCommunity(store, gateway, promotions) {
         return finishTicket(db.ticket(row.id));
       }
       return db.ticket(row.id);
+    });
+  }
+  async function manageTicket(actor,id,action,target) {
+    const row=db.ticket(rowId(id));
+    if (!row) throw new RuleError('التذكرة غير موجودة.',404);
+    return exclusive('ticket:'+row.owner,async()=>{
+      const ticket=db.ticket(row.id);
+      await ticketStaff(actor,ticket);
+      if (!ticket.channel || !['open','closed'].includes(ticket.state)) throw new RuleError('التذكرة غير متاحة الآن.',409);
+      if (action==='check-delete') return;
+      if (action==='rename' || action==='delete') {
+        await gateway.editTicketRoom(ticket,action,target);
+        if (action==='delete') db.ticketRemoved(ticket.channel);
+        return;
+      }
+      if (!['add','remove'].includes(action)) throw new RuleError('إجراء تذكرة غير صالح.');
+      snowflake(target);
+      const guest=db.ticketGuests(ticket.id).includes(target);
+      if (action==='add' && ticket.state!=='open') throw new RuleError('لا يمكن إضافة عضو إلى تذكرة مغلقة.',409);
+      if (action==='add' && guest) throw new RuleError('هذا العضو مضاف للتذكرة بالفعل.',409);
+      if (action==='remove' && !guest) throw new RuleError('هذا العضو لم تتم إضافته بأمر +add.',409);
+      await gateway.editTicketRoom(ticket,action,target,guest);
+      if (action==='add') db.rememberTicketGuest(ticket.id,target);
+      else db.forgetTicketGuest(ticket.id,target);
     });
   }
   async function saveSettings(actor,input) {
@@ -209,9 +246,12 @@ function createCommunity(store, gateway, promotions) {
       try { await exclusive('request:'+row.id,()=>applyRequest(row)); } catch {}
     }
     for (const row of db.transitioningTickets()) {
-      try { await exclusive('ticket:'+row.owner,()=>finishTicket(row)); } catch {}
+      try { await exclusive('ticket:'+row.owner,async()=>{
+        const latest=db.ticket(row.id);
+        if (latest && ['opening','closing','reopening'].includes(latest.state)) await finishTicket(latest);
+      }); } catch {}
     }
   }
-  return {moderate,checkModeration,submit,review,openTicket,ticketAction,support,reviewer,dashboard,saveSettings,recover,manager};
+  return {moderate,checkModeration,submit,review,openTicket,ticketAction,manageTicket,support,reviewer,dashboard,saveSettings,recover,manager};
 }
 module.exports={createCommunity, verifyTarget, kinds, requestStates, snowflake, rowId};
