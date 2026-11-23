@@ -5,6 +5,7 @@ const {catalog,roles,RuleError,parseRankChangeArgs} = require('./ladder');
 const {kinds,requestStates} = require('./community');
 const {activity}=require('../config/discord-features.json');
 const {withArabicAliases, commandName, subcommandName} = require('./command-aliases');
+const {parseTop,periods,modes,topReply}=require('./activity-top');
 const formatActivity=(template,values)=>template.replace(/\{(\w+)\}/g,(match,key)=>Object.hasOwn(values,key)?String(values[key]):match);
 
 const option=(type,name,description,required=true,extra={})=>({type,name,description,required,...extra});
@@ -38,7 +39,10 @@ const baseCommands=[
     sub('close','أغلق الكتابة واحتفظ بسجل التذكرة'),sub('reopen','أعد فتح التذكرة الحالية')
   ]),
   cmd('rank','اعرض مستوى النشاط',[option(6,'member','العضو، أو اتركه فارغًا لعرض مستواك',false)]),
-  cmd('top','اعرض الأعضاء الأكثر نشاطًا'),
+  cmd('top','Show text and voice leaderboards',[
+    option(3,'period','Select a time range',false,{choices:Object.entries(periods).map(([value,name])=>({name,value}))}),
+    option(3,'mode','Select text, voice, or both',false,{choices:Object.entries(modes).map(([value,name])=>({name,value}))})
+  ]),
   cmd('game','ابدأ لعبة جماعية في الروم الحالي',[
     sub('roulette','ابدأ جولة روليت لاختيار فائز'),
     sub('chairs','ابدأ جولة كراسي موسيقية'),
@@ -70,9 +74,12 @@ const helpText=[
   'الطلبات والألعاب بالعربي · /طلب تقديم، /طلب حالة، /تذكرة فتح، /ألعاب روليت، /ألعاب كراسي، /ألعاب مافيا، /ألعاب حجر-ورقة-مقص، /ألعاب حقيبة، /ألعاب متجر',
   'اختصارات الشات · +ر للرولات، +بان @العضو [السبب]، +فك-بان معرّف_العضو. السبب اختياري في أوامر الإشراف.',
   'مالك السيرفر · +ر الجميع @الرول للأعضاء أو +ر البوتات @الرول للبوتات. يقبل معرّف الرول أيضًا، ويطلب تأكيدًا للرولات الحساسة.',
-  'السيرفر · /roles، /server، /ping، /rank، /top'
+  'السيرفر · /roles، /server، /ping، /rank، /top',
+  'التوب · توب، توب يومي، توب أسبوعي، توب شهري. للتخصص: توب كتابي يومي أو توب فويس شهري.'
 ].join('\n');
 function parseChat(text) {
+  const top=parseTop(text);
+  if (top) return top;
   if (!text.startsWith('+')) return null;
   const [first,...parts]=text.slice(1).trim().split(/\s+/u);
   if (first==='ر' && ['الجميع','البوتات'].includes(parts[0])) {
@@ -85,7 +92,8 @@ function parseChat(text) {
   const action=Object.hasOwn(chatAliases,first) ? chatAliases[first] : Object.values(chatAliases).includes(first) ? first : null;
   if (!action) return null;
   if (action==='demote') return {action,...parseRankChangeArgs(parts,'+تخفيض')};
-  if (['ping','help','server','roles','top'].includes(action)) return {action};
+  if (action==='top') return null;
+  if (['ping','help','server','roles'].includes(action)) return {action};
   if (['lock','unlock'].includes(action)) return {action,reason:parts.join(' ')};
   if (action==='rank' && !parts.length) return {action};
   const token=parts.shift() || '';
@@ -98,7 +106,7 @@ function parseChat(text) {
   return input;
 }
 
-function commandRunner({store,community,promotions,readyGuild,pair,bulkRole}) {
+function commandRunner({store,community,promotions,readyGuild,pair,bulkRole,now=Date.now}) {
   const db=store.community;
   return async function run(input) {
     const {action,actor,delivery,channel}=input;
@@ -151,8 +159,7 @@ function commandRunner({store,community,promotions,readyGuild,pair,bulkRole}) {
         const member=input.target||actor, points=db.xp(member);
         return formatActivity(activity.rank,{member,points,level:Math.floor(points/100),remaining:100-points%100});
       }
-      const rows=db.top().map((row,index)=>formatActivity(activity.row,{member:row.member,points:row.xp,position:index+1}));
-      return formatActivity(activity.top,{rows:rows.join('\n')||activity.empty}).slice(0,1950);
+      return topReply(db,{period:input.period,mode:input.mode,now:now()});
     }
     if (action==='request') {
       if (input.sub==='cancel') {
@@ -194,7 +201,8 @@ function interactionInput(i) {
   const o=i.options;
   return {action:commandName(i.commandName),sub:subcommandName(i.commandName,o.getSubcommand(false)),actor:i.user.id,channel:i.channelId,delivery:'slash:'+i.id,created:i.createdTimestamp,
     target:o.getUser('member')?.id || o.getString('user_id'),minutes:o.getInteger('minutes'),id:o.getInteger('id'),caseId:o.getInteger('id'),
-    reason:o.getString('reason'),subject:o.getString('subject'),kind:o.getString('kind'),details:o.getString('details')};
+    reason:o.getString('reason'),subject:o.getString('subject'),kind:o.getString('kind'),details:o.getString('details'),
+    ...(commandName(i.commandName)==='top'?{period:o.getString('period'),mode:o.getString('mode')}: {})};
 }
 function shape(item) {
   return {type:item.type,name:item.name,description:item.description,required:item.required || false,

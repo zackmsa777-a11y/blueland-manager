@@ -3,6 +3,7 @@
 const {RuleError, parseRankChangeArgs} = require('./ladder');
 const {commands, chatAliases, parseChat} = require('./commands');
 const {commandName, subcommandName} = require('./command-aliases');
+const {parseTop}=require('./activity-top');
 const clean = value => String(value ?? '').normalize('NFKC').trim().replace(/\s+/gu,' ');
 const keyOf = value => clean(value).toLowerCase();
 const mention = /^<@!?(\d{17,20})>$/u;
@@ -26,6 +27,7 @@ for (const def of commands.filter(d=>commandName(d.name)===d.name)) {
     if(action==='game') chat.push('.'+alias.split(' ').at(-1));
     if(action==='game'&&sub==='rps') chat.push('.حجر','.حجر ورقة مقص');
     if(action==='promote')chat.push('+ترقية');
+    if(action==='top')chat.push('توب','توب يومي','توب أسبوعي','توب شهري','توب كتابي','توب فويس','توب كتابي يومي','توب فويس شهري');
     if(action==='dashboard')chat.push('+لوحة');
     const access=groupOf(action)==='mod'||['promote','dashboard'].includes(action)||action==='request'&&['approve','reject','pending'].includes(sub)?'حسب صلاحية الطاقم':
       action==='ticket'&&sub==='close'?'صاحب التذكرة أو الدعم':action==='ticket'&&sub!=='create'?'الدعم':'أعضاء السيرفر';
@@ -51,7 +53,7 @@ function openShortcuts(db) {
     phrase=clean(phrase);
     if (phrase.length>40||!/^\p{L}[\p{L}\p{M}\p{N}]*(?:[ _-][\p{L}\p{M}\p{N}]+)*$/u.test(phrase)) throw new RuleError('اكتب حرفًا أو كلمة أو عبارة (حتى 40 حرفًا) بدون + أو / أو منشن.');
     const key=keyOf(phrase);
-    if (reserved.has(key)) throw new RuleError('الاسم مستخدم في أمر حالي.',409);
+    if (reserved.has(key) || parseTop(key)) throw new RuleError('الاسم مستخدم في أمر حالي.',409);
     if (count.get().n>=200) throw new RuleError('وصلت للحد الأقصى للاختصارات.',409);
     if (!insert.run(key,phrase,command,actor,Date.now()).changes) throw new RuleError('الاختصار ده مستخدم بالفعل.',409);
     return {phrase,command};

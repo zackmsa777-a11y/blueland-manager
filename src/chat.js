@@ -8,13 +8,20 @@ function createMessageHandler({ authorize, service, store, publicOrigin, run, pa
     const inGuild=message.inGuild();
     if (inGuild && message.guildId!==catalog.guildId) return;
     const text = message.content?.trim() || '';
-    const reply = content => message.reply({content, allowedMentions:{parse:[], repliedUser:false}});
+    const reply = output => message.reply({...(typeof output==='string'?{content:output}:output),allowedMentions:{parse:[],repliedUser:false}});
     try {
       if (!inGuild) {
         if (run && ['+بنق','+ping','+مساعدة','+help'].includes(text)) await reply(await run({action:parse(text).action,actor:message.author.id}));
         return;
       }
       if (ticketMessages && await ticketMessages(message,text)) return;
+      if (run && parse && /^\+?(?:توب|top)(?:\s|$)/iu.test(text)) {
+        const top=parse(text);
+        if (top?.action==='top') {
+          await reply(await run({...top,actor:message.author.id,channel:message.channelId,delivery:'discord:'+message.id,created:message.createdTimestamp}));
+          return;
+        }
+      }
       const {autoReply,roleAutoReply}=require('../config/discord-features.json');
       if (roleAutoReply?.trigger === text) {
         const member = await message.guild.members.fetch({user:message.author.id, force:true, cache:false}).catch(()=>null);
@@ -37,7 +44,8 @@ function createMessageHandler({ authorize, service, store, publicOrigin, run, pa
       }
       if (!text.startsWith('+')) {
         if (shortcuts && await shortcuts(message,text)) return;
-        if (text && store.community?.settings().levels) store.community.addXp(message.author.id,message.createdTimestamp);
+        if ((text || message.attachments?.size || message.stickers?.size) && store.community?.settings().levels)
+          store.community.addXp(message.author.id,message.createdTimestamp,Boolean(text));
         return;
       }
       if (text === '+لوحة') {

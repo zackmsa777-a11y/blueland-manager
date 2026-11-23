@@ -7,6 +7,7 @@ const { makeService } = require('./promotions');
 const { createCommunity } = require('./community');
 const { communityGateway } = require('./discord-community');
 const { commandRunner, parseChat, registerCommands, interactionInput, commands } = require('./commands');
+const {createVoiceActivity}=require('./activity-top');
 const { createDiscordGames } = require('./discord-games');
 const { createShortcutHandler } = require('./shortcut-dispatch');
 
@@ -77,6 +78,9 @@ function connectDiscord(store, env) {
     lookupTicket:channel=>store.community.ticketByChannel(channel)});
   const tickets=require('./discord-tickets').createDiscordTickets({db:store.community,community,readyGuild});
   const onMessage=createMessageHandler({authorize:community.dashboard,service,store,publicOrigin:env.PUBLIC_ORIGIN,run,parse:parseChat,shortcuts,ticketMessages:tickets.text});
+  const voice=createVoiceActivity(store.community);
+  let voiceTimer;
+  const trackVoice=work=>{try {work();} catch(err) {voice.reset();console.warn('BlueLand voice activity:',err.code || err.name);}};
   const syncTickets=()=>tickets.syncPanel().catch(err=>console.warn('BlueLand ticket panel:',err.code || err.message));
   let syncing=false;
   async function sync() {
@@ -107,6 +111,10 @@ function connectDiscord(store, env) {
         client.on(event, () => { validUntil = 0; });
       }
       client.on(api.Events.MessageCreate, onMessage);
+      client.on(api.Events.VoiceStateUpdate,(_,state)=>{
+        if (client.isReady()) trackVoice(()=>voice.update(state));
+      });
+      client.on(api.Events.GuildUnavailable,guild=>{if(guild.id===catalog.guildId) voice.reset();});
       client.on(api.Events.ChannelDelete,c=>{
         if (c.guildId!==catalog.guildId) return;
         games.removeRoom(c.id);
@@ -127,7 +135,8 @@ function connectDiscord(store, env) {
         if (!i.isChatInputCommand() || !commands.some(c=>c.name===i.commandName)) return;
         try {
           await i.deferReply({flags:api.MessageFlags.Ephemeral});
-          await i.editReply({content:await run(interactionInput(i)),allowedMentions:{parse:[]}});
+          const output=await run(interactionInput(i));
+          await i.editReply({...(typeof output==='string'?{content:output}:output),allowedMentions:{parse:[]}});
         } catch(err) {
           const msg=err instanceof RuleError?err.message:'تعذّر إتمام الأمر. راجع صلاحيات البوت وحالة الاتصال.';
           if (i.deferred || i.replied) await i.editReply({content:msg,allowedMentions:{parse:[]}}).catch(()=>{});
@@ -152,14 +161,25 @@ function connectDiscord(store, env) {
         clearInterval(timer);
         timer = setInterval(() => { recover().catch(() => {}); sync().catch(()=>{}); void syncTickets(); }, 60_000);
         timer.unref();
+        const checkpoint=()=>{
+          const guild=client.isReady()?client.guilds.cache.get(catalog.guildId):null;
+          if (guild?.available) trackVoice(()=>voice.checkpoint(guild)); else voice.reset();
+        };
+        clearInterval(voiceTimer);
+        checkpoint();
+        voiceTimer=setInterval(checkpoint,30_000);
+        voiceTimer.unref();
       });
       client.on(api.Events.Error, () => {});
       client.on(api.Events.ShardDisconnect, event => {
+        voice.reset();
         if (event.code === 4014) connection = { code: 'error', text: 'فعّل Message Content Intent في إعدادات التطبيق' };
       });
       await client.login(token);
     } catch (err) {
       clearInterval(timer);
+      clearInterval(voiceTimer);
+      voice.reset();
       client?.destroy();
       let message = 'تعذّر اتصال البوت. راجع التوكن والاتصال بديسكورد.';
       if (err instanceof RuleError) message=err.message;

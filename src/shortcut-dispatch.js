@@ -24,7 +24,8 @@ function createShortcutHandler({shortcuts, context, readyGuild, service, communi
     const {spec}=hit;
     const actor=message.author.id, channel=message.channelId;
     const allowedMentions={parse:[],repliedUser:false};
-    const reply=content=>message.reply({content,allowedMentions});
+    const payload=output=>({...(typeof output==='string'?{content:output}:output),allowedMentions});
+    const reply=output=>message.reply(payload(output));
     // The actor check never uses arguments. Unauthorized authors get no usage or error reply.
     try {await preflight(spec,actor,channel);} catch {return true;}
     try {
@@ -32,7 +33,7 @@ function createShortcutHandler({shortcuts, context, readyGuild, service, communi
       if(spec.action==='game'){await games.openShortcut(message,spec.sub,input.lobbyMs);return true;}
       const output=await run({...input,actor,channel,delivery:'discord:'+message.id,created:message.createdTimestamp});
       if(['dashboard','warnings','request','ticket','rank','top'].includes(spec.action)) {
-        try {await message.author.send({content:output,allowedMentions});}
+        try {await message.author.send(payload(output));}
         catch {await reply('افتح الخاص أو استخدم أمر السلاش الأصلي للحصول على رد خاص.');return true;}
         await reply('بعتلك النتيجة في الخاص.');
       } else await reply(output);
