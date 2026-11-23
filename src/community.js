@@ -70,7 +70,7 @@ function createCommunity(store, gateway, promotions) {
     if (roomAction) snowflake(channel);
     if (action==='lock' || action==='unlock') target=channel;
     snowflake(target);
-    const why=value(reason || (['unmute','untimeout','unlock','warnings'].includes(action) ? 'بأمر المسؤول' : ''),350);
+    const why=value(String(reason ?? '').trim() || 'بأمر المسؤول',350);
     return exclusive('mod:'+target,async()=>{
       const ctx=await moderator(actor,action,target);
       if (action==='warnings') return db.cases(target).filter(row=>row.action==='warn' && !row.revoked);

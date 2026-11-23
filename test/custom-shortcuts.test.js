@@ -39,7 +39,10 @@ test('registered guide lists 40 commands and SQLite shortcuts are global, unique
     assert.equal(store.shortcuts.match('مرسيدسات'),null);
     assert.equal(store.shortcuts.match('+بان '+target+' test'),null);
     assert.deepEqual(parseShortcut(store.shortcuts.match('تف '+target+' سبب اختباري')),{action:'ban',sub:null,target:other,reason:'سبب اختباري'});
-    assert.throws(()=>parseShortcut(store.shortcuts.match('تف')),{message:'الاستخدام: `تف @العضو السبب`'});
+    assert.deepEqual(parseShortcut(store.shortcuts.match('تف '+target)),{action:'ban',sub:null,target:other});
+    assert.deepEqual(parseShortcut(store.shortcuts.match('برا '+target)),{action:'kick',sub:null,target:other});
+    assert.equal(commandGuide(store.shortcuts).find(c=>c.name==='/ban').options.find(o=>o.name==='reason').required,false);
+    assert.throws(()=>parseShortcut(store.shortcuts.match('تف')),{message:'الاستخدام: `تف @العضو [السبب]`'});
     store.shortcuts.add('ارفع عضو','/promote',actor);store.shortcuts.add('اخفض عضو','+تخفيض',actor);
     assert.equal(parseShortcut(store.shortcuts.match('ارفع عضو '+target+' 2')).count,2);
     assert.equal(parseShortcut(store.shortcuts.match('اخفض عضو '+target+' 3')).count,3);
@@ -64,7 +67,7 @@ test('alias moderation checks real BlueLand actor permissions before usage and d
   await send('تف');await send('تف '+target+' تجربة');await send('برا '+target+' تجربة');
   assert.deepEqual(replies,[]);assert.deepEqual(actions,[]);
   privileged=true;
-  await send('تف');assert.equal(replies[0].content,'الاستخدام: `تف @العضو السبب`');assert.deepEqual(replies[0].allowedMentions,{parse:[],repliedUser:false});
+  await send('تف');assert.equal(replies[0].content,'الاستخدام: `تف @العضو [السبب]`');assert.deepEqual(replies[0].allowedMentions,{parse:[],repliedUser:false});
   await send('تف '+target+' تجربة');assert.deepEqual(actions,[{action:'ban',sub:null,target:other,reason:'تجربة',actor,channel,delivery:'discord:123',created:10}]);
   await send('تف مش أمر');assert.equal(actions.length,1);assert.equal(replies.length,2);assert.equal(xp,1);
 });

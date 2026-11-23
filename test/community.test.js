@@ -63,6 +63,25 @@ test('a delegated New Staff warning does not allow timeouts, self moderation or 
   assert.equal(h.store.community.cases(member).length,3);
 });
 
+test('optional reasons default in audit and Discord calls without relaxing moderation permissions',async t=>{
+  const h=fixture(t);
+  const applied=[];
+  h.g.memberAction=async entry=>applied.push(entry);
+  const input={actor:owner,target:member};
+  const banned=await h.community.moderate({...input,action:'ban',delivery:'no-ban-reason'});
+  const kicked=await h.community.moderate({...input,action:'kick',delivery:'blank-kick-reason',reason:'  '});
+  const muted=await h.community.moderate({...input,action:'mute',channel,delivery:'provided-reason',reason:'  إزعاج  '});
+  assert.deepEqual([banned.reason,kicked.reason,muted.reason],['بأمر المسؤول','بأمر المسؤول','إزعاج']);
+  assert.deepEqual(applied.map(entry=>entry.reason),['بأمر المسؤول','بأمر المسؤول']);
+  await assert.rejects(h.community.moderate({actor:outsider,target:member,action:'ban',delivery:'denied'}),{status:403});
+  await assert.rejects(h.community.moderate({...input,action:'timeout',delivery:'no-duration'}),/مدة التايم أوت/);
+  await assert.rejects(h.community.moderate({...input,action:'kick',delivery:'long-reason',reason:'x'.repeat(351)}),/350/);
+  for(const name of ['warn','unwarn','timeout','untimeout','mute','unmute','lock','unlock','kick','ban','unban','بان','طرد']) {
+    assert.equal(commands.find(def=>def.name===name).options.find(opt=>opt.name==='reason').required,false,name);
+  }
+  assert.equal(commands.find(def=>def.name==='request').options.find(opt=>opt.name==='reject').options.find(opt=>opt.name==='reason').required,true);
+});
+
 test('removing any helper or raising its native permission bits blocks a partial restored ladder',()=>{
   const live=new Map(roles);assert.equal(ladderIssue(live),'');
   live.delete(mod.helpers[0]);assert.ok(ladderIssue(live));
