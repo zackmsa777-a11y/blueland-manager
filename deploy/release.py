@@ -48,7 +48,9 @@ def activate(path):
     subprocess.run(["/usr/bin/systemctl", "--no-ask-password", "restart", "blueland.service"],
                    timeout=40, check=True)
     request = urllib.request.Request("http://127.0.0.1:4196/api/status", headers={"Host": "bot.najdhorizonco.shop"})
-    for attempt in range(45):
+    # Discord can rate-limit sequential updates to guild slash commands.
+    deadline = time.monotonic() + 120
+    while time.monotonic() < deadline:
         try:
             with urllib.request.urlopen(request, timeout=2) as response:
                 state = json.load(response)["connection"]
