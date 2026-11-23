@@ -86,6 +86,10 @@ function createCommunity(store, gateway, promotions) {
       return db.record(delivery,action,actor,target,why);
     });
   }
+  async function checkModeration(actor,action) {
+    if(!Object.hasOwn(rules,action))throw new RuleError('أمر الإشراف غير معروف.',403);
+    verifyActor(await gateway.context(snowflake(actor)),...rules[action]);
+  }
   async function manager(actor) { const ctx=await gateway.context(actor); verifyActor(ctx,P.ManageGuild); return ctx; }
   async function support(actor) {
     const ctx=await gateway.context(actor);
@@ -208,6 +212,6 @@ function createCommunity(store, gateway, promotions) {
       try { await exclusive('ticket:'+row.owner,()=>finishTicket(row)); } catch {}
     }
   }
-  return {moderate,submit,review,openTicket,ticketAction,support,reviewer,dashboard,saveSettings,recover,manager};
+  return {moderate,checkModeration,submit,review,openTicket,ticketAction,support,reviewer,dashboard,saveSettings,recover,manager};
 }
 module.exports={createCommunity, verifyTarget, kinds, requestStates, snowflake, rowId};

@@ -84,7 +84,12 @@ function createApp({ store, discord, publicOrigin = '' }) {
           res.setHeader('Set-Cookie', 'bl_session=' + cookieFlags + '; Max-Age=0');
           return json({ ok:true });
         }
-        await staff();
+        const viewer=await staff();
+        if (route === '/api/command-shortcuts') {
+          if (!viewer.rights?.config) throw new RuleError('إضافة الاختصارات تحتاج صلاحية إدارة السيرفر.',403);
+          await discord.community.manager(actor);
+          return json(store.shortcuts.add(input.phrase,input.command,actor),201);
+        }
         if (route === '/api/staff/request') return json(await discord.community.review(actor,input.id,input.decision,input.reason));
         if (route === '/api/staff/ticket') return json(await discord.community.ticketAction(actor,input.id,input.action));
         if (route === '/api/staff/settings') return json(await discord.community.saveSettings(actor,input));
@@ -109,7 +114,11 @@ function createApp({ store, discord, publicOrigin = '' }) {
         return json({ connection:discord.status(), viewer, needsLogin:Boolean(home && !viewer) });
       }
       if (route.startsWith('/api/')) {
-        if (home) await staff();
+        const viewer=home ? await staff() : null;
+        if (route==='/api/command-guide') {
+          const current=viewer || (actor ? await staff() : null);
+          return json({commands:require('./custom-shortcuts').commandGuide(store.shortcuts),canEdit:Boolean(current?.rights?.config)});
+        }
         if (route==='/api/commands') {
           const {commands}=require('./commands');
           return json(commands.map(c=>({name:c.name,description:c.description,subcommands:c.options.filter(o=>o.type===1).map(o=>o.name)})));

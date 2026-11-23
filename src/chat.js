@@ -2,12 +2,12 @@
 
 const { catalog, roles, RuleError, parsePromotion } = require('./ladder');
 
-function createMessageHandler({ authorize, service, store, publicOrigin, run, parse }) {
+function createMessageHandler({ authorize, service, store, publicOrigin, run, parse, shortcuts }) {
   return async function onMessage(message) {
     if (message.author.bot || message.webhookId) return;
     const inGuild=message.inGuild();
     if (inGuild && message.guildId!==catalog.guildId) return;
-    const text = message.content.trim();
+    const text = message.content?.trim() || '';
     const reply = content => message.reply({content, allowedMentions:{parse:[], repliedUser:false}});
     try {
       if (!inGuild) {
@@ -15,6 +15,7 @@ function createMessageHandler({ authorize, service, store, publicOrigin, run, pa
         return;
       }
       if (!text.startsWith('+')) {
+        if (shortcuts && await shortcuts(message,text)) return;
         if (text && store.community?.settings().levels) store.community.addXp(message.author.id,message.createdTimestamp);
         return;
       }

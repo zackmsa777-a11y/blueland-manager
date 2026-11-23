@@ -36,6 +36,7 @@ function openStore(file) {
   }
   return {
     community: openCommunityStore(db),
+    shortcuts: require('./custom-shortcuts').openShortcuts(db),
     roulette: require('./roulette-shop').openRouletteShop(db),
     byId,
     pending(target) {

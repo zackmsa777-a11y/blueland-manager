@@ -8,6 +8,7 @@ const { createCommunity } = require('./community');
 const { communityGateway } = require('./discord-community');
 const { commandRunner, parseChat, registerCommands, interactionInput, commands } = require('./commands');
 const { createDiscordGames } = require('./discord-games');
+const { createShortcutHandler } = require('./shortcut-dispatch');
 
 function connectDiscord(store, env) {
   let client, api, timer, recovering = false, cachedDirectory, refresh, validUntil = 0, attemptedToken;
@@ -72,7 +73,9 @@ function connectDiscord(store, env) {
   const bulkRole = require('./bulk-role').createBulkRole({readyGuild,
     reservedRole: id => allowed.has(id) || store.community.settings().supportRole === id});
   const run=commandRunner({store,community,promotions:service,readyGuild,pair,bulkRole});
-  const onMessage=createMessageHandler({authorize:community.dashboard,service,store,publicOrigin:env.PUBLIC_ORIGIN,run,parse:parseChat});
+  const shortcuts=createShortcutHandler({shortcuts:store.shortcuts,context,readyGuild,service,community,run,games,
+    lookupTicket:channel=>store.community.ticketByChannel(channel)});
+  const onMessage=createMessageHandler({authorize:community.dashboard,service,store,publicOrigin:env.PUBLIC_ORIGIN,run,parse:parseChat,shortcuts});
   let syncing=false;
   async function sync() {
     if (syncing || connection.slashReady===commands.length) return;
@@ -113,6 +116,10 @@ function connectDiscord(store, env) {
         for (const m of messages.values()) games.removeMessage(m.channelId,m.id);
       });
       client.on(api.Events.InteractionCreate, async i=>{
+        if (!i.guildId && i.isStringSelectMenu() && ['blgshop:buy','blgshop:equip'].includes(i.customId) && i.message?.author?.id===client.user.id) {
+          await games.handle(i);
+          return;
+        }
         if (i.guildId!==catalog.guildId || (i.isChatInputCommand() && i.commandGuildId!==catalog.guildId)) return;
         if (await games.handle(i)) return;
         if (!i.isChatInputCommand() || !commands.some(c=>c.name===i.commandName)) return;

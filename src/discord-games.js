@@ -296,7 +296,20 @@ function createDiscordGames(economy) {
     return true;
   }
 
-  return {handle, removeMessage, removeRoom};
+  async function openShortcut(message,kind) {
+    if (kind==='shop'||kind==='bag') {
+      if (!economy) throw new RuleError('متجر الروليت غير متاح حاليًا.');
+      try {await message.author.send({...shopPanel(kind,economy.profile(message.author.id)),allowedMentions:{parse:[]}});}
+      catch {throw new RuleError('افتح الخاص أو استخدم /game '+kind+' عشان تشوفه بشكل خاص.');}
+      return;
+    }
+    return open({
+      channelId:message.channelId,user:message.author,member:message.member,client:message.client,guild:message.guild,
+      deferReply:async()=>{},editReply:payload=>message.reply({...payload,allowedMentions:{...payload.allowedMentions,repliedUser:false}})
+    },kind);
+  }
+
+  return {handle, openShortcut, removeMessage, removeRoom};
 }
 
 module.exports = {createDiscordGames};
