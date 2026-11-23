@@ -15,8 +15,8 @@ function createMessageHandler({ authorize, service, store, publicOrigin, run, pa
         return;
       }
       const {autoReply}=require('../config/discord-features.json');
-      if (autoReply?.author === message.author.id && autoReply.trigger === text &&
-          !message.attachments?.size && !message.stickers?.size) {
+      if (autoReply?.trigger === text && Array.isArray(autoReply.authors) &&
+          autoReply.authors.includes(message.author.id) && !message.attachments?.size && !message.stickers?.size) {
         try {
           const posted = await message.channel.send({content:autoReply.content, allowedMentions:{parse:[]}});
           const confirmed = await message.channel.messages.fetch({message:posted.id, force:true, cache:false});

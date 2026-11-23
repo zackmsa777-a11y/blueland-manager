@@ -27,9 +27,10 @@ const postAndVerify = [
   ['verify',{message:'200000000000000002',force:true,cache:false}]
 ];
 
-test('only the intended author’s standalone dash sends a normal message and deletes the trigger', async () => {
+test('a standalone dash sends and cleans up only for the two approved accounts', async () => {
   const {calls,passedToShortcuts,send} = fixture();
   await send();
+  await send({author:{id:'1235369589408399392'}});
   await send({author:{id:'1486306919324057683'}});
   await send({guildId:'200000000000000001'});
   await send({inGuild:()=>false});
@@ -38,7 +39,8 @@ test('only the intended author’s standalone dash sends a normal message and de
   await send({attachments:new Map([['image',{}]])});
   await send({stickers:new Map([['sticker',{}]])});
   for (const content of ['--','- شيء','شيء -','—']) await send({content});
-  assert.deepEqual(calls,[...postAndVerify,['delete-trigger']]);
+  const expected = [...postAndVerify,['delete-trigger']];
+  assert.deepEqual(calls,[...expected,...expected]);
   assert.deepEqual(passedToShortcuts,['-','-','-','--','- شيء','شيء -','—']);
 });
 
