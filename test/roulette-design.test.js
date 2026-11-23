@@ -12,9 +12,9 @@ const {createGame} = require('../src/game-rules');
 const channelId = '1574014085027209308';
 const messageId = '1574147765036916938';
 const assetId = '1574147764504494150';
-const artwork = new Resvg('<svg xmlns="http://www.w3.org/2000/svg" width="60" height="20"><rect width="60" height="20" fill="#ff0033"/></svg>').render().asPng();
+const artwork = new Resvg('<svg xmlns="http://www.w3.org/2000/svg" width="748" height="333"><rect width="748" height="333" fill="#ff0033"/></svg>').render().asPng();
 
-test('roulette lobby attaches the supplied Discord PNG unchanged', async t => {
+test('roulette lobby fetches the supplied Discord PNG and overlays the BlueLand logo only on its hub', async t => {
   const attachment = `https://cdn.discordapp.com/attachments/${channelId}/${assetId}/no-background-1.png?ex=refreshed`;
   const attempts = [];
   t.mock.method(global, 'fetch', async (url, options) => {
@@ -34,7 +34,10 @@ test('roulette lobby attaches the supplied Discord PNG unchanged', async t => {
   assert.equal(await rouletteBanner(client), banner);
   assert.deepEqual(attempts, [attachment]);
   const view = gamePanel({...createGame('roulette', 'host', 'Host'), rouletteBanner: banner});
-  assert.equal(view.files[0].attachment, banner);
+  const updated = view.files[0].attachment;
+  assert.ok(!updated.equals(banner), 'banner hub is still unchanged');
+  assert.deepEqual([updated.readUInt32BE(16), updated.readUInt32BE(20)], [748, 333]);
+  assert.equal(gamePanel({...createGame('roulette','host','Host'),rouletteBanner:banner}, {includeLobbyImage:false}).files, undefined);
   assert.equal(view.embeds, undefined);
 });
 

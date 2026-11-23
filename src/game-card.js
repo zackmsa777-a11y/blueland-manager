@@ -146,7 +146,7 @@ function renderGameCard({ game, title, subtitle = '', footer = '', items = [], s
   return new Resvg(svg, {font}).render().asPng();
 }
 
-const {COLORS, rouletteWheelSvg, rouletteLobbySvg, rouletteWinnerSvg} = require('./roulette-art');
+const {COLORS, rouletteWheelSvg, rouletteLobbySvg, rouletteWinnerSvg, rouletteBannerHubSvg} = require('./roulette-art');
 const {items: rouletteStyles} = require('./roulette-shop');
 
 function renderRouletteWinner({name, avatar, reward, style}) {
@@ -155,6 +155,13 @@ function renderRouletteWinner({name, avatar, reward, style}) {
 }
 
 function renderRouletteLobby(banner) {
+  if (Buffer.isBuffer(banner)) {
+    // Only brand the known lobby artwork layout; a different shape uses the built-in card.
+    if (banner.length >= 33 && banner.readUInt32BE(16) === 748 && banner.readUInt32BE(20) === 333) {
+      return new Resvg(rouletteBannerHubSvg(banner), {font}).render().asPng();
+    }
+    banner = undefined;
+  }
   const artwork = banner || `data:image/jpeg;base64,${banners.roulette}`;
   return new Resvg(rouletteLobbySvg(artwork), {font}).render().asPng();
 }

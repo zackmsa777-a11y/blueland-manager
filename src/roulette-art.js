@@ -1,5 +1,7 @@
 'use strict';
 
+const logo = require('./roulette-logo');
+
 const SIZE = 440;
 const COLORS = [0x000000, 0x102341, 0xc7d8ed, 0x174070, 0xffffff, 0x0a182e, 0x82cfff, 0x1c6699,
   0x314c70, 0x569bd1, 0xedf6ff, 0x7390b6, 0x265887, 0x97b8dc, 0xdcf3ff, 0x0e2a50];
@@ -29,9 +31,7 @@ function wheelBody(names, selected, turn, avatar) {
     const label = count <= 18 ? `<g transform="translate(${labelX} ${labelY}) rotate(${tilt.toFixed(3)})">${text(names[i], 0, 5, count > 8 ? 14 : 18, '#ffffff', count > 8 ? 11 : 14)}</g>` : '';
     return `<path d="M220 220 L${xy(199, from)} A199 199 0 0 1 ${xy(199, from + step)} Z" fill="${fill}" stroke="#c7d8ed" stroke-opacity=".65" stroke-width="${count > 40 ? .55 : 1.5}"/>${label}`;
   }).join('');
-  const mark = avatar
-    ? `<defs><clipPath id="roulette-avatar"><circle cx="220" cy="220" r="55"/></clipPath></defs><image x="165" y="165" width="110" height="110" xlink:href="${avatar}" clip-path="url(#roulette-avatar)" preserveAspectRatio="xMidYMid slice"/>`
-    : text('BL', 220, 234, 43, '#edf6ff', 2);
+  const mark = `<defs><clipPath id="roulette-avatar"><circle cx="220" cy="220" r="55"/></clipPath></defs><image x="165" y="165" width="110" height="110" xlink:href="${avatar || logo}" clip-path="url(#roulette-avatar)" preserveAspectRatio="xMidYMid slice"/>`;
   return rim + wedges + '<circle cx="220" cy="220" r="59" fill="#0e2a50" stroke="#edf6ff" stroke-width="4"/>' + mark +
     '<path d="M 434 205 L 410 220 L 434 235 Z" fill="#edf6ff" stroke="#569bd1" stroke-width="2" stroke-linejoin="round"/>';
 }
@@ -61,11 +61,16 @@ function rouletteLobbySvg(banner) {
   return svg(840, 290, '0 0 840 290', card);
 }
 
+function rouletteBannerHubSvg(banner) {
+  return svg(748, 333, '0 0 748 333', '<defs><clipPath id="lobby-hub"><circle cx="193.5" cy="171.5" r="19"/></clipPath></defs>' +
+    `<image width="748" height="333" xlink:href="data:image/png;base64,${banner.toString('base64')}"/>` +
+    `<image x="174.5" y="152.5" width="38" height="38" xlink:href="${logo}" clip-path="url(#lobby-hub)"/>` +
+    '<circle cx="193.5" cy="171.5" r="19" fill="none" stroke="#90d7ff" stroke-width="1.5"/>');
+}
+
 function rouletteWinnerSvg({name, avatar, reward, style}) {
   const {color, dark} = style;
-  const portrait = avatar
-    ? `<image x="310" y="107" width="200" height="200" xlink:href="${avatar}" clip-path="url(#portrait)" preserveAspectRatio="xMidYMid slice"/>`
-    : text('BL', 410, 226, 62, '#edf6ff', 2);
+  const portrait = `<image x="310" y="107" width="200" height="200" xlink:href="${avatar || logo}" clip-path="url(#portrait)" preserveAspectRatio="xMidYMid slice"/>`;
   const stars = Array.from({length: 66}, (_, i) => {
     const x = 18 + (i * 137 % 782);
     const y = 15 + (i * 83 % 470);
@@ -82,4 +87,4 @@ function rouletteWinnerSvg({name, avatar, reward, style}) {
   return svg(820, 500, '0 0 820 500', body);
 }
 
-module.exports = {COLORS, rouletteWheelSvg, rouletteLobbySvg, rouletteWinnerSvg};
+module.exports = {COLORS, rouletteWheelSvg, rouletteLobbySvg, rouletteWinnerSvg, rouletteBannerHubSvg};

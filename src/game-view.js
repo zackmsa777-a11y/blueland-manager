@@ -97,7 +97,7 @@ function rouletteLobby(game, includeImage) {
   const timer = Number.isFinite(game.lobbyDeadline) ? `\n⏳ ينتهي التسجيل بعد **${lobbyCountdown(game.lobbyDeadline)}**` : '';
   return {
     content: `**${count}**${timer}`, allowedMentions: {parse: []},
-    ...(includeImage ? {files: [{attachment: game.rouletteBanner || renderRouletteLobby(), name: 'roulette.png',
+    ...(includeImage ? {files: [{attachment: renderRouletteLobby(game.rouletteBanner), name: 'roulette.png',
       description: 'روليت BlueLand · التسجيل مفتوح'}]} : {}),
     components: [row([rouletteButton(game, 'join', 'دخول'), rouletteButton(game, 'leave', 'خروج'),
       rouletteButton(game, 'start', 'ابدأ', 1), rouletteButton(game, 'cancel', 'إلغاء', 4)]), rouletteEconomyButtons(game)]
