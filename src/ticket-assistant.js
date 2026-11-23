@@ -33,7 +33,8 @@ function createTicketAssistant({botId,now=Date.now}) {
     rooms.set(ticket.channel,state);
     if (rooms.size>512) rooms.delete(rooms.keys().next().value);
 
-    let response;
+    const previous=state.people.get(actor);
+    let response, fallback=false;
     const noDiscordMentions=body.replace(/<(?:@!?|@&|#)\d{17,20}>/gu,'');
     if (body.startsWith('+')) response=refused;
     else if (personal.test(noDiscordMentions)) response=privacy;
@@ -49,12 +50,17 @@ function createTicketAssistant({botId,now=Date.now}) {
     else if (/(?:وين الطاقم|متي يرد|متي الرد|كم انتظر|احد يرد|حد يرد|هنا احد)/u.test(question)) response=ticket.assignee?'الطاقم استلم تذكرتك. خلّي أي تحديث هون عشان يضل كل شي بمكان واحد.':'لسّه الطاقم ما استلم التذكرة. خلّيك هون، ومنشن واحد بكفي 🙏';
     else if (/(?:شكرا|تسلم|يعطيك العافيه|تمام وصلت|thank)/u.test(question)) response='ولو! إذا في شي ثاني بخصوص التذكرة احكيلي 🙂';
     else if (/(?:كيف (?:اقفل|اغلق)|بدي اقفل|اغلاق التذكره)/u.test(question)) response='إذا خلصت مشكلتك اضغط «إغلاق التذكرة» أو اكتب `+close`. الإغلاق ما يحذف الروم.';
-    else response='معك. احكيلي شو المشكلة وشو جرّبت لحد هسا، بدون معلومات حساسة. إذا احتاجت إجراء إداري فالطاقم بيتولّاه.';
-    if (!response || time-state.lastSent<ROOM_COOLDOWN || time-(state.people.get(actor) ?? -Infinity)<USER_COOLDOWN) return;
+    else {
+      fallback=true;
+      const count=previous?.fallbackCount ?? 0;
+      if (count===0) response='معك. احكيلي شو المشكلة وشو جرّبت، بدون معلومات حساسة.';
+      else if (count===1) response='وصلت الإضافة. إذا في رسالة خطأ، اكتب نصّها أو قل لي بأي خطوة وقفت، بدون رموز أو كلمات سر.';
+    }
+    if (!response || time-state.lastSent<ROOM_COOLDOWN || time-(previous?.at ?? -Infinity)<USER_COOLDOWN) return;
     state.lastSent=time;
 
     state.people.delete(actor);
-    state.people.set(actor,time);
+    state.people.set(actor,{at:time,fallbackCount:(previous?.fallbackCount ?? 0)+Number(fallback)});
     if (state.people.size>64) state.people.delete(state.people.keys().next().value);
     await message.channel.send({content:response,allowedMentions:{parse:[]}}).catch(()=>{});
   };
