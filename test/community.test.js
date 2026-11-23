@@ -82,6 +82,17 @@ test('optional reasons default in audit and Discord calls without relaxing moder
   assert.equal(commands.find(def=>def.name==='request').options.find(opt=>opt.name==='reject').options.find(opt=>opt.name==='reason').required,true);
 });
 
+test('unlock mentions the channel on success and retains the audit record',async t=>{
+  const h=fixture(t);
+  const input={action:'unlock',actor:owner,channel,delivery:'unlock-reply'};
+  assert.equal(await h.run(input),`🔓 تم فتح القناة <#${channel}> بنجاح.`);
+  assert.equal(h.store.community.fromEvent(input.delivery).target,channel);
+  assert.deepEqual(h.calls,['unlock']);
+  h.g.roomPermission=async()=>{throw new RuleError('لا يوجد منع كتابة مسجّل.');};
+  await assert.rejects(h.run({...input,delivery:'unlock-failed'}),/لا يوجد منع كتابة/);
+  assert.equal(h.store.community.fromEvent('unlock-failed'),undefined);
+});
+
 test('removing any helper or raising its native permission bits blocks a partial restored ladder',()=>{
   const live=new Map(roles);assert.equal(ladderIssue(live),'');
   live.delete(mod.helpers[0]);assert.ok(ladderIssue(live));
