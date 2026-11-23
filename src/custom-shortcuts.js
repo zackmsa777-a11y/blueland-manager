@@ -43,7 +43,7 @@ function openShortcuts(db) {
   function add(phrase,command,actor){
     if (typeof phrase!=='string'||typeof command!=='string'||!catalog.has(command)) throw new RuleError('اختَر أمرًا موجودًا في الدليل.');
     phrase=clean(phrase);
-    if (phrase.length<2||phrase.length>40||!/^\p{L}[\p{L}\p{M}\p{N}]*(?:[ _-][\p{L}\p{M}\p{N}]+)*$/u.test(phrase)) throw new RuleError('اكتب كلمة أو عبارة من 2 إلى 40 حرف بدون + أو / أو منشن.');
+    if (phrase.length>40||!/^\p{L}[\p{L}\p{M}\p{N}]*(?:[ _-][\p{L}\p{M}\p{N}]+)*$/u.test(phrase)) throw new RuleError('اكتب حرفًا أو كلمة أو عبارة (حتى 40 حرفًا) بدون + أو / أو منشن.');
     const key=keyOf(phrase);
     if (reserved.has(key)) throw new RuleError('الاسم مستخدم في أمر حالي.',409);
     if (count.get().n>=200) throw new RuleError('وصلت للحد الأقصى للاختصارات.',409);

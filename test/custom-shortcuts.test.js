@@ -72,6 +72,26 @@ test('alias moderation checks real BlueLand actor permissions before usage and d
   await send('تف مش أمر');assert.equal(actions.length,1);assert.equal(replies.length,2);assert.equal(xp,1);
 });
 
+test('one-letter unlock shortcuts require channel management permission',async t=>{
+  const store=openStore(':memory:');t.after(()=>store.close());
+  assert.deepEqual(store.shortcuts.add('ف','/unlock',actor),{phrase:'ف',command:'/unlock'});
+  assert.throws(()=>store.shortcuts.add('ف','/unlock',actor),{status:409});
+  for(const phrase of [' ','+ف','/ف','1']) assert.throws(()=>store.shortcuts.add(phrase,'/unlock',actor));
+
+  let privileged=false;
+  const actions=[], guildRoles=new Map(roles);
+  guildRoles.set(mod,{id:mod,permissions:String(P.ManageChannels),position:2});
+  const community=createCommunity(store,{context:async id=>({actor:{id,bot:false,roles:privileged?[mod]:[]},ownerId:owner,roles:guildRoles})},{});
+  const handle=createShortcutHandler({shortcuts:store.shortcuts,community,run:async input=>{actions.push(input.action);return 'اختبار فقط';}});
+  const message={author:{id:actor},channelId:channel,id:'123',createdTimestamp:10,reply:async()=>{}};
+  assert.equal(await handle(message,'ف'),true);
+  assert.deepEqual(actions,[]);
+  privileged=true;
+  assert.equal(await handle(message,'ف كلام عادي'),false);
+  assert.equal(await handle(message,'ف'),true);
+  assert.deepEqual(actions,['unlock']);
+});
+
 test('private shortcut results use DM, and game shortcuts reuse real game renderer',async t=>{
   const store=openStore(':memory:');t.after(()=>store.close());
   store.shortcuts.add('اريني الحقيبة','/game bag',actor);
