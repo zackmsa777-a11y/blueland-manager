@@ -183,6 +183,7 @@ function commandRunner({store,community,promotions,readyGuild,pair,bulkRole}) {
     }
     const result=await community.moderate({...input,reason:input.reason || (action==='warnings'?'عرض التحذيرات':'')});
     if (action==='warnings') return result.map(r=>'#'+r.id+' · '+r.reason.slice(0,90)).slice(0,12).join('\n') || 'ما فيه تحذيرات نشطة لهذا العضو.';
+    if (action==='lock') return `**🔒 تم قفل القناة <#${channel}> بنجاح.**`;
     if (action==='unlock') return `🔓 تم فتح القناة <#${channel}> بنجاح.`;
     return 'تم تنفيذ '+action+' · سجل الإشراف #'+result.id+'.';
   };

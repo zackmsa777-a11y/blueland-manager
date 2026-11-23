@@ -82,6 +82,17 @@ test('optional reasons default in audit and Discord calls without relaxing moder
   assert.equal(commands.find(def=>def.name==='request').options.find(opt=>opt.name==='reject').options.find(opt=>opt.name==='reason').required,true);
 });
 
+test('lock mentions the channel in bold on success and retains the audit record',async t=>{
+  const h=fixture(t);
+  const input={action:'lock',actor:owner,channel,delivery:'lock-reply'};
+  assert.equal(await h.run(input),`**🔒 تم قفل القناة <#${channel}> بنجاح.**`);
+  assert.equal(h.store.community.fromEvent(input.delivery).target,channel);
+  assert.deepEqual(h.calls,['lock']);
+  h.g.roomPermission=async()=>{throw new RuleError('تعذّر قفل القناة.');};
+  await assert.rejects(h.run({...input,delivery:'lock-failed'}),/تعذّر قفل القناة/);
+  assert.equal(h.store.community.fromEvent('lock-failed'),undefined);
+});
+
 test('unlock mentions the channel on success and retains the audit record',async t=>{
   const h=fixture(t);
   const input={action:'unlock',actor:owner,channel,delivery:'unlock-reply'};
