@@ -4,3 +4,4 @@ description: Edit BlueLand bot code and Discord commands, review changes and pub
 provides_tools:
   - blueland_release
   - blueland_bot_code
+  - blueland_cloudflare

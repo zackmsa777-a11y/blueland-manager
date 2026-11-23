@@ -364,7 +364,55 @@ def command(raw_args, *, source=None, platform=""):
         return "تعذّر التحقق من خدمة النشر. افحص الحالة بأمر /release status."
 
 
+def cloudflare(action, actor, room, platform):
+    operator(platform,actor,room)
+    if action not in ("status", "routes", "dns"):
+        raise ValueError("استخدم /cloudflare status أو routes أو dns.")
+    with socket.socket(socket.AF_UNIX) as connection:
+        connection.settimeout(27)
+        connection.connect("/run/blueland-cloudflare-cli.sock")
+        connection.sendall(action.encode() + b"\n")
+        with connection.makefile("rb") as stream:
+            result = json.loads(stream.readline(8000))
+    if isinstance(result, dict) and "error" in result:
+        raise ValueError(result["error"])
+    return result
+
+
+def cloudflare_tool(params, **kwargs):
+    from gateway.session_context import get_session_env
+    try:
+        result = cloudflare(params["action"], get_session_env("HERMES_SESSION_USER_ID"),
+                            get_session_env("HERMES_SESSION_CHAT_ID"), get_session_env("HERMES_SESSION_PLATFORM"))
+        return json.dumps(result, ensure_ascii=False)
+    except (OSError, ValueError, KeyError) as error:
+        return json.dumps({"error": str(error)}, ensure_ascii=False)
+
+
+def cloudflare_command(raw_args, *, source=None, platform=""):
+    action = raw_args.strip() or "status"
+    try:
+        result = cloudflare(action, str(source.user_id), str(source.chat_id), platform)
+    except ValueError as error:
+        return str(error)
+    except (OSError, AttributeError):
+        return "تعذّر الاتصال بخدمة Cloudflare."
+    if action == "status":
+        return f"`{result['name']}` · `{result['status']}`"
+    if not result:
+        return "ما فيه نتائج لمسار bot أو games."
+    if action == "routes":
+        return "\n".join(f"`{row['host']}{row['path']}` → `{row['service']}`" for row in result)
+    return "\n".join(f"`{row['host']}` · `{row['type']}` · {'Proxied' if row['proxied'] else 'DNS only'}"
+                     for row in result)
+
+
 def register(ctx):
+    ctx.register_tool(name="blueland_cloudflare",toolset="blueland_release",handler=cloudflare_tool,schema={
+        "name":"blueland_cloudflare","description":"Read the BlueLand Cloudflare tunnel status, published bot/games routes or DNS for the two hostnames.",
+        "parameters":{"type":"object","properties":{"action":{"type":"string","enum":["status","routes","dns"]}},
+                      "required":["action"]}})
+    ctx.register_command("cloudflare",cloudflare_command,"حالة نفق Cloudflare ومساراته وDNS",args_hint="status | routes | dns")
     ctx.register_tool(name="blueland_bot_code",toolset="blueland_release",handler=code_tool,schema={
         "name":"blueland_bot_code","description":"Edit the bot application in the current Discord room: src, public, config, scripts and JS tests. List files, read optional line ranges, create a module with content, replace a unique old snippet with new text, write full content, or delete a file. Replace/write/delete require the latest file sha256. For new commands inspect src/commands.js for registration and dispatch. Edits persist across messages. Preview using blueland_release.",
         "parameters":{"type":"object","properties":{"action":{"type":"string","enum":["list","read","create","replace","write","delete"]},

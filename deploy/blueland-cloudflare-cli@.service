@@ -1,0 +1,22 @@
+[Unit]
+Description=Read Cloudflare routes and DNS for BlueLand
+
+[Service]
+DynamicUser=yes
+ExecStart=/usr/bin/python3 -I /usr/local/libexec/blueland-cloudflare-cli.py serve
+LoadCredential=cloudflare-token:/etc/blueland-cloudflare/admin-token
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+RuntimeMaxSec=30
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectProc=invisible
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+CapabilityBoundingSet=
+InaccessiblePaths=-/etc/blueland-cloudflare -/etc/blueland -/etc/blueland-hermes -/etc/blueland-publish -/var/lib/blueland-hermes -/var/lib/blueland
+UMask=0077

@@ -57,6 +57,15 @@ function connectDiscord(store, env) {
   const gateway=communityGateway(readyGuild,context);
   const community=createCommunity(store,gateway,service);
   const games=createDiscordGames(store.roulette);
+  const {createDiscordPool}=require('./discord-pool');
+  const {createPoolAccess,discordPoolIdentity}=require('./pool-access');
+  const poolSecret=()=>env.DISCORD_CLIENT_SECRET?.trim();
+  const poolEnabled=()=>env.BLUELAND_POOL_ENABLED==='1'&&Boolean(poolSecret());
+  const billiards=createDiscordPool({guildId:catalog.guildId,readyGuild,available:poolEnabled,
+    log:err=>console.warn('BlueLand 8 Ball:',err)});
+  const poolAccess=createPoolAccess({app:botId,guild:catalog.guildId,pool:billiards.pool,voice:billiards.voice,enabled:poolEnabled,
+    identity:discordPoolIdentity({app:botId,secret:poolSecret}),
+    instanceInfo:id=>client.rest.get(`/applications/${botId}/activity-instances/${encodeURIComponent(id)}`)});
   async function authorize(id) {
     const ctx = await context(id);
     service.checkOperator(ctx);
@@ -78,7 +87,7 @@ function connectDiscord(store, env) {
   const shortcuts=createShortcutHandler({shortcuts:store.shortcuts,context,readyGuild,service,community,run,games,
     lookupTicket:channel=>store.community.ticketByChannel(channel)});
   const tickets=require('./discord-tickets').createDiscordTickets({db:store.community,community,readyGuild});
-  const onMessage=createMessageHandler({authorize:community.dashboard,service,store,publicOrigin:env.PUBLIC_ORIGIN,run,parse:parseChat,shortcuts,ticketMessages:tickets.text});
+  const onMessage=createMessageHandler({authorize:community.dashboard,service,store,publicOrigin:env.PUBLIC_ORIGIN,run,parse:parseChat,shortcuts,ticketMessages:tickets.text,poolMessages:billiards.text});
   const voice=createVoiceActivity(store.community);
   let voiceTimer;
   let dailyTopTimer;
@@ -119,8 +128,11 @@ function connectDiscord(store, env) {
         client.on(event, () => { validUntil = 0; });
       }
       client.on(api.Events.MessageCreate, onMessage);
-      client.on(api.Events.VoiceStateUpdate,(_,state)=>{
+      client.on(api.Events.VoiceStateUpdate,(previous,state)=>{
         if (client.isReady()) trackVoice(()=>voice.update(state));
+        if (state.guild.id===catalog.guildId&&previous.channelId&&previous.channelId!==state.channelId) {
+          void billiards.voiceChanged(state.id,previous.channelId).catch(err=>console.warn('BlueLand 8 Ball:',err.code||err.name));
+        }
       });
       client.on(api.Events.GuildUnavailable,guild=>{if(guild.id===catalog.guildId) voice.reset();});
       client.on(api.Events.ChannelDelete,c=>{
@@ -139,7 +151,7 @@ function connectDiscord(store, env) {
           return;
         }
         if (i.guildId!==catalog.guildId || (i.isChatInputCommand() && i.commandGuildId!==catalog.guildId)) return;
-        if (await tickets.interaction(i) || await games.handle(i)) return;
+        if (await tickets.interaction(i) || await billiards.handle(i) || await games.handle(i)) return;
         if (!i.isChatInputCommand() || !commands.some(c=>c.name===i.commandName)) return;
         try {
           await i.deferReply({flags:api.MessageFlags.Ephemeral});
@@ -238,7 +250,8 @@ function connectDiscord(store, env) {
     }
   }
   return { start, loadLocalConfig, status, authorize, dashboardAccess:community.dashboard, service, community, destinations:gateway.destinations, directory,
-    close() { clearInterval(timer); client?.destroy(); } };
+    poolActivity:{access:poolAccess,pool:billiards.pool,appId:botId},
+    close() { billiards.close(); clearInterval(timer); client?.destroy(); } };
 }
 
 module.exports = { connectDiscord };

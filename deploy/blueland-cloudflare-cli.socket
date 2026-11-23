@@ -1,0 +1,13 @@
+[Unit]
+Description=Cloudflare status commands for BlueLand Discord
+
+[Socket]
+ListenStream=/run/blueland-cloudflare-cli.sock
+SocketMode=0660
+SocketGroup=blueland-hermes
+Accept=yes
+MaxConnections=4
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target
