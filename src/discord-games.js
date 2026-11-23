@@ -52,9 +52,13 @@ function createDiscordGames(economy) {
       if (!active(game) && !terminal) return;
       const previous = game.message;
       if (game.phase === 'play' || game.phase === 'done') {
+        const closing = {components: []};
+        if (game.rouletteStage === 'spin' && game.round === 1) {
+          closing.content = `**انتهى التسجيل وبدأت الروليت** · ${game.alive.length} لاعبين`;
+        }
         const next = await previous.channel.send(gamePanel(game));
         game.message = next;
-        void previous.edit({components: []}).catch(() => {});
+        void previous.edit(closing).catch(() => {});
       } else {
         await previous.edit(gamePanel(game, {includeLobbyImage: false}));
       }
@@ -152,15 +156,24 @@ function createDiscordGames(economy) {
     publish(game);
   }
 
+  function finishRouletteLobby(game) {
+    if (!active(game) || game.phase !== 'lobby') return;
+    if (game.players.size < games.roulette.min) {
+      return cancel(game, 'انتهت مهلة التسجيل. الروليت تحتاج لاعبين على الأقل.');
+    }
+    start(game);
+    startSpin(game);
+  }
+
   function schedule(game) {
     clearTimeout(game.timer);
     const lobby = game.phase === 'lobby';
     if (lobby && game.kind === 'roulette') {
       const remaining = game.lobbyDeadline - Date.now();
-      if (remaining <= 0) return cancel(game, 'انتهت مهلة التسجيل.');
+      if (remaining <= 0) return finishRouletteLobby(game);
       game.timer = setTimeout(() => {
         if (!active(game) || game.phase !== 'lobby') return;
-        if (Date.now() >= game.lobbyDeadline) return cancel(game, 'انتهت مهلة التسجيل.');
+        if (Date.now() >= game.lobbyDeadline) return finishRouletteLobby(game);
         publish(game);
         schedule(game);
       }, lobbyRefreshDelay(remaining));
@@ -220,7 +233,7 @@ function createDiscordGames(economy) {
     }
     const lobby = game.phase === 'lobby';
     if (lobby && game.kind === 'roulette' && Date.now() >= game.lobbyDeadline) {
-      cancel(game, 'انتهت مهلة التسجيل.');
+      finishRouletteLobby(game);
       return fail('انتهت مهلة التسجيل.');
     }
     if (action === 'cancel') {

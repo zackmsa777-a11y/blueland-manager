@@ -153,7 +153,7 @@ test('roulette posts the wheel phases separately, pings only the selected player
   const spinCancel = f.button('cancel').custom_id;
   assertSpin(f.panel.files[0]);
   assert.deepEqual(f.panel.allowedMentions, {parse: []});
-  assert.deepEqual(lobby.writes.at(-1), {components: []});
+  assert.deepEqual(lobby.writes.at(-1), {content: '**انتهى التسجيل وبدأت الروليت** · 2 لاعبين', components: []});
   const stale = await f.send(spectator, {customId: oldJoin, message: lobby});
   assert.equal(stale.flags, MessageFlags.Ephemeral);
   assert.match(stale.content, /انتهت/);
