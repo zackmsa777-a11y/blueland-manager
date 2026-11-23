@@ -10,7 +10,6 @@ const { openStore } = require('./store');
 const { connectDiscord } = require('./discord');
 const { exportCsv } = require('./directory');
 const root = path.resolve(__dirname, '..');
-const poolHost = 'games.najdhorizonco.shop';
 const mime = { '.html':'text/html; charset=utf-8', '.js':'text/javascript; charset=utf-8', '.css':'text/css; charset=utf-8',
   '.png':'image/png', '.webp':'image/webp', '.woff2':'font/woff2', '.svg':'image/svg+xml' };
 
@@ -42,8 +41,6 @@ async function body(req) {
 }
 function createApp({ store, discord, publicOrigin = '' }) {
   const home = validateOrigin(publicOrigin);
-  const poolRoute=discord.poolActivity&&require('./pool-http').poolHttp({...discord.poolActivity,
-    origin:`https://${discord.poolActivity.appId}.discordsays.com`,publicDirectory:path.join(root,'public')});
   const cookieFlags = '; Path=/; HttpOnly; SameSite=Strict' + (home ? '; Secure' : '');
   const loginTimes = [];
   return http.createServer(async (req, res) => {
@@ -56,14 +53,6 @@ function createApp({ store, discord, publicOrigin = '' }) {
     res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
     try {
       const host = req.headers.host || '';
-      if (host === poolHost) {
-        // The game-only hostname must never fall through to the staff dashboard.
-        const gameOrigin = `https://${poolHost}`;
-        const gameUrl = new URL(req.url, gameOrigin);
-        if (gameUrl.origin !== gameOrigin) throw new RuleError('عنوان غير صالح.', 403);
-        if (!poolRoute) return json({error:'8 Ball is not available yet.'},503);
-        return await poolRoute(req,res,`/activity/pool${gameUrl.pathname}`,{json,body});
-      }
       if (home ? host !== new URL(home).host : !/^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/.test(host)) {
         throw new RuleError('عنوان اللوحة غير مسموح.', 403);
       }
@@ -71,7 +60,6 @@ function createApp({ store, discord, publicOrigin = '' }) {
       const url = new URL(req.url, origin);
       if (url.origin !== origin) throw new RuleError('عنوان غير صالح.', 403);
       const route = url.pathname;
-      if (poolRoute && await poolRoute(req,res,route,{json,body})) return;
       const session = /(?:^|;\s*)bl_session=([0-9a-f]{64})(?:;|$)/.exec(req.headers.cookie || '')?.[1];
       const actor = store.actor(session);
       async function staff() {

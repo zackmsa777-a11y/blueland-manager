@@ -2,7 +2,7 @@
 
 const { catalog, roles, RuleError, parsePromotion } = require('./ladder');
 
-function createMessageHandler({ authorize, service, store, publicOrigin, run, parse, shortcuts, ticketMessages, poolMessages }) {
+function createMessageHandler({ authorize, service, store, publicOrigin, run, parse, shortcuts, ticketMessages }) {
   return async function onMessage(message) {
     if (message.author.bot || message.webhookId) return;
     const inGuild=message.inGuild();
@@ -15,7 +15,6 @@ function createMessageHandler({ authorize, service, store, publicOrigin, run, pa
         return;
       }
       if (ticketMessages && await ticketMessages(message,text)) return;
-      if (poolMessages && await poolMessages(message,text)) return;
       if (run && parse && /^\+?(?:توب|top)(?:\s|$)/iu.test(text)) {
         const top=parse(text);
         if (top?.action==='top') {
