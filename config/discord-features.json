@@ -10,5 +10,10 @@
     "trigger": "-",
     "content": "https://cdn.discordapp.com/attachments/1570801907671244878/1574071721500082248/no-background.png?ex=6b04f8c7&is=6b03a747&hm=ac425ef186a10a54e8eaf3e4c0bfe7542a261def08af3090e45c98cf83972a98&"
   },
+  "roleAutoReply": {
+    "roleId": "1574013532586909736",
+    "trigger": "+مقبول",
+    "content": "**يرجى وضع الشعار او التاق والرابط ليتم قبولك بشكل رسمي.\n- الشعار : \n`Name` ᴮˡᵘᵉ\n`Name`ᴮᴸ\nBlueLand `Name`\n- التاق : \nلسا مافي\n\n- الرابط :\nلسا مافي اختصار استخدم رابط خاص\n\nبعد اخذ الرولات يرجى النظر في: https://discord.com/channels/1573975432838127708/1574014273951371284\nاي استفسرات اخرى تقدر تسأل المسؤول __الي قبل تقديمك__\n**"
+  },
   "commands": {}
 }

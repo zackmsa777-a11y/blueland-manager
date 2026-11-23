@@ -14,7 +14,15 @@ function createMessageHandler({ authorize, service, store, publicOrigin, run, pa
         if (run && ['+بنق','+ping','+مساعدة','+help'].includes(text)) await reply(await run({action:parse(text).action,actor:message.author.id}));
         return;
       }
-      const {autoReply}=require('../config/discord-features.json');
+      const {autoReply,roleAutoReply}=require('../config/discord-features.json');
+      if (roleAutoReply?.trigger === text) {
+        const member = await message.guild.members.fetch({user:message.author.id, force:true, cache:false}).catch(()=>null);
+        if (member?.roles.cache.has(roleAutoReply.roleId)) {
+          await message.channel.send({content:roleAutoReply.content, allowedMentions:{parse:[]}})
+            .catch(err=>console.warn('BlueLand role auto-reply could not send:',err.code || err.name));
+        }
+        return;
+      }
       if (autoReply?.trigger === text && Array.isArray(autoReply.authors) &&
           autoReply.authors.includes(message.author.id) && !message.attachments?.size && !message.stickers?.size) {
         try {
