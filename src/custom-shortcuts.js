@@ -11,7 +11,11 @@ const groupOf = action => ['warn','unwarn','warnings','timeout','untimeout','mut
   : ['request','ticket'].includes(action) ? 'requests' : action==='game' ? 'games' : 'general';
 const names={member:'@العضو',user_id:'معرّف_العضو',id:'رقم_السجل',minutes:'الدقائق',reason:'السبب',kind:'نوع_الطلب',details:'التفاصيل',subject:'الموضوع',count:'عدد_الدرجات',role:'@الرول'};
 const catalog=new Map();
-function register(row) {catalog.set(row.name,row);}
+const dotGameCommands=new Map();
+function register(row) {
+  catalog.set(row.name,row);
+  if(row.action==='game') for(const alias of row.chat) dotGameCommands.set(alias,row);
+}
 for (const def of commands.filter(d=>commandName(d.name)===d.name)) {
   const a=commands.find(d=>d.name!==def.name && commandName(d.name)===def.name);
   const subs=def.options.filter(o=>o.type===1);
@@ -19,6 +23,8 @@ for (const def of commands.filter(d=>commandName(d.name)===d.name)) {
     const action=def.name;
     const knownChat=sub?[]:Object.entries(chatAliases).filter(([,kind])=>kind===action).map(([phrase])=>'+'+phrase);
     const chat=knownChat.length?[...knownChat,'+'+action]:[];
+    if(action==='game') chat.push('.'+alias.split(' ').at(-1));
+    if(action==='game'&&sub==='rps') chat.push('.حجر','.حجر ورقة مقص');
     if(action==='promote')chat.push('+ترقية');
     if(action==='dashboard')chat.push('+لوحة');
     const access=groupOf(action)==='mod'||['promote','dashboard'].includes(action)||action==='request'&&['approve','reject','pending'].includes(sub)?'حسب صلاحية الطاقم':
@@ -52,6 +58,10 @@ function openShortcuts(db) {
   }
   function match(text){
     if (!text || /^[+/]/u.test(text)) return null;
+    if (text.startsWith('.')) {
+      const spec=dotGameCommands.get(text);
+      return spec ? {phrase:text,spec,args:''} : null;
+    }
     // Do not normalize free-form arguments (e.g. a reason) entered by the user.
     const words=[...text.matchAll(/\S+/gu)];
     const prefixes=new Map();

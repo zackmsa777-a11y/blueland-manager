@@ -104,6 +104,31 @@ test('private shortcut results use DM, and game shortcuts reuse real game render
   assert.equal(await handle(msg,'رول جماعية'),true);assert.equal(sent[0].files[0].name,'roulette.png');
 });
 
+test('dot shortcuts open every guild game and keep the roulette bag and shop private',async t=>{
+  const store=openStore(':memory:');t.after(()=>store.close());
+  const games=createDiscordGames(store.roulette);
+  const shortcuts=createShortcutHandler({shortcuts:store.shortcuts,games});
+  const onMessage=createMessageHandler({store,shortcuts});
+  const publicMessages=[], dms=[], channels=[];
+  t.after(()=>channels.forEach(id=>games.removeRoom(id)));
+  const send=(content,fromGuild=true,guildId=catalog.guildId)=>{
+    const channelId=String(BigInt(channel)+BigInt(channels.length));
+    channels.push(channelId);
+    return onMessage({content,channelId,guildId,inGuild:()=>fromGuild,createdTimestamp:Date.now(),
+      author:{id:actor,username:'Tester',async send(p){dms.push(p)}},async reply(p){publicMessages.push(p);return {id:channelId}}});
+  };
+  for(const [alias,kind] of [['.روليت','roulette'],['.كراسي','chairs'],['.مافيا','mafia'],['.حجر','rps']]) {
+    await send(alias);
+    assert.equal(publicMessages.at(-1).files[0].name,kind+'.png');
+    assert.ok(commandGuide(store.shortcuts).find(c=>c.name==='/game '+kind).chat.includes(alias));
+  }
+  for(const phrase of ['.حجر-ورقة-مقص','.حجر ورقة مقص']) assert.equal(store.shortcuts.match(phrase).spec.sub,'rps');
+  await send('.حقيبة');await send('.متجر');
+  assert.deepEqual(dms.map(p=>p.content.split('\n')[0]),['**🎒 حقيبة الروليت**','**🛒 متجر الروليت**']);
+  await send('.روليت الآن');await send('.غير-معروف');await send('.روليت',false);await send('.روليت',true,'elsewhere');
+  assert.equal(publicMessages.length,4);assert.equal(dms.length,2);
+});
+
 test('HTTP shortcut creation requires authenticated config rights and same-origin input',async t=>{
   const store=openStore(':memory:');t.after(()=>store.close());
   let granted=true, gateCalls=0;
