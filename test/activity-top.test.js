@@ -36,7 +36,7 @@ test('the real chat handler replies once with an English Embed and keeps normal 
   const replies=[];
   const handler=createMessageHandler({store,run,parse:parseChat});
   const send=(content,guildId=catalog.guildId,agent=false)=>handler({content,guildId,inGuild:()=>true,createdTimestamp:now,channelId:id(21),id:id(22),author:{id:id(1),bot:agent},reply:async p=>replies.push(p)});
-  await send('السلام عليكم');
+  await send('كيف حالكم؟');
   await send('توب كتابي يومي');
   await send('توب',id(99));
   await send('توب',catalog.guildId,true);

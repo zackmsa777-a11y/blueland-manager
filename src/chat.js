@@ -2,6 +2,14 @@
 
 const { catalog, roles, RuleError, parsePromotion } = require('./ladder');
 
+function isSalamGreeting(text) {
+  const plain=text.normalize('NFKC').replace(/[\p{M}\u0640\u200b-\u200f\u202a-\u202e\u2066-\u2069]/gu,'')
+    .replace(/[آأإٱ]/g,'ا').replace(/^[*_~]+\s*/u,'').trimStart();
+  return /^(?:و\s*)?(?:ال)?سلا+م\s+عليكم(?=$|[\s\p{P}\p{S}])/u.test(plain);
+}
+
+const {autoReply,roleAutoReply,salamReply}=require('../config/discord-features.json');
+
 function createMessageHandler({ authorize, service, store, publicOrigin, run, parse, shortcuts, ticketMessages }) {
   return async function onMessage(message) {
     if (message.author.bot || message.webhookId) return;
@@ -9,11 +17,18 @@ function createMessageHandler({ authorize, service, store, publicOrigin, run, pa
     if (inGuild && message.guildId!==catalog.guildId) return;
     const text = message.content?.trim() || '';
     const reply = output => message.reply({...(typeof output==='string'?{content:output}:output),allowedMentions:{parse:[],repliedUser:false}});
+    const greeting=salamReply && isSalamGreeting(text);
+    const replySalam=()=>reply({content:salamReply,failIfNotExists:true})
+      .catch(err=>console.warn('BlueLand salam reply could not send:',err.code || err.name));
     try {
       if (!inGuild) {
+        if (greeting) return await replySalam();
         if (run && ['+بنق','+ping','+مساعدة','+help'].includes(text)) await reply(await run({action:parse(text).action,actor:message.author.id}));
         return;
       }
+      // A fixed greeting in a ticket or its thread does not reach the assistant or earn XP.
+      if (greeting && [message.channelId,message.channel?.parentId].some(id=>id && store.community?.ticketByChannel?.(id)))
+        return await replySalam();
       if (ticketMessages && await ticketMessages(message,text)) return;
       if (run && parse && /^\+?(?:توب|top)(?:\s|$)/iu.test(text)) {
         const top=parse(text);
@@ -22,7 +37,6 @@ function createMessageHandler({ authorize, service, store, publicOrigin, run, pa
           return;
         }
       }
-      const {autoReply,roleAutoReply}=require('../config/discord-features.json');
       if (roleAutoReply?.trigger === text) {
         const member = await message.guild.members.fetch({user:message.author.id, force:true, cache:false}).catch(()=>null);
         if (member?.roles.cache.has(roleAutoReply.roleId)) {
@@ -46,6 +60,7 @@ function createMessageHandler({ authorize, service, store, publicOrigin, run, pa
         if (shortcuts && await shortcuts(message,text)) return;
         if ((text || message.attachments?.size || message.stickers?.size) && store.community?.settings().levels)
           store.community.addXp(message.author.id,message.createdTimestamp,Boolean(text));
+        if (greeting) await replySalam();
         return;
       }
       if (text === '+لوحة') {
