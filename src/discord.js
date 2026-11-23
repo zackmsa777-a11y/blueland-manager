@@ -8,6 +8,7 @@ const { createCommunity } = require('./community');
 const { communityGateway } = require('./discord-community');
 const { commandRunner, parseChat, registerCommands, interactionInput, commands } = require('./commands');
 const {createVoiceActivity}=require('./activity-top');
+const {createDailyTopReport}=require('./activity-report');
 const { createDiscordGames } = require('./discord-games');
 const { createShortcutHandler } = require('./shortcut-dispatch');
 
@@ -80,7 +81,14 @@ function connectDiscord(store, env) {
   const onMessage=createMessageHandler({authorize:community.dashboard,service,store,publicOrigin:env.PUBLIC_ORIGIN,run,parse:parseChat,shortcuts,ticketMessages:tickets.text});
   const voice=createVoiceActivity(store.community);
   let voiceTimer;
+  let dailyTopTimer;
   const trackVoice=work=>{try {work();} catch(err) {voice.reset();console.warn('BlueLand voice activity:',err.code || err.name);}};
+  const dailyTop=createDailyTopReport({db:store.community,botId,
+    getChannel:id=>readyGuild().channels.fetch(id,{force:true,cache:false}),
+    beforeSnapshot:()=>voice.checkpoint(readyGuild())});
+  const tickDailyTop=()=>{
+    if (client?.isReady()) void dailyTop().catch(err=>console.warn('BlueLand daily top:',err.code || err.message));
+  };
   const syncTickets=()=>tickets.syncPanel().catch(err=>console.warn('BlueLand ticket panel:',err.code || err.message));
   let syncing=false;
   async function sync() {
@@ -169,6 +177,10 @@ function connectDiscord(store, env) {
         checkpoint();
         voiceTimer=setInterval(checkpoint,30_000);
         voiceTimer.unref();
+        clearInterval(dailyTopTimer);
+        dailyTopTimer=setInterval(tickDailyTop,5_000);
+        dailyTopTimer.unref();
+        tickDailyTop();
       });
       client.on(api.Events.Error, () => {});
       client.on(api.Events.ShardDisconnect, event => {
@@ -179,6 +191,7 @@ function connectDiscord(store, env) {
     } catch (err) {
       clearInterval(timer);
       clearInterval(voiceTimer);
+      clearInterval(dailyTopTimer);
       voice.reset();
       client?.destroy();
       let message = 'تعذّر اتصال البوت. راجع التوكن والاتصال بديسكورد.';

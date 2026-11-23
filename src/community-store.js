@@ -2,6 +2,7 @@
 
 const { RuleError,catalog } = require('./ladder');
 const {createActivityStore}=require('./activity-top');
+const {openDailyTopReceipts}=require('./activity-report');
 
 const defaults = {
   levels: false,
@@ -27,6 +28,7 @@ function openCommunityStore(db) {
   if (!columns.has('details')) db.exec("ALTER TABLE support_tickets ADD COLUMN details TEXT NOT NULL DEFAULT ''");
   db.exec('CREATE TABLE IF NOT EXISTS support_ticket_guests (ticket INTEGER NOT NULL, member TEXT NOT NULL, PRIMARY KEY(ticket,member)); CREATE TABLE IF NOT EXISTS support_ticket_panel (id INTEGER PRIMARY KEY CHECK(id=1), message TEXT NOT NULL)');
   const activity=createActivityStore(db);
+  const dailyTop=openDailyTopReceipts(db);
 
   const request = id => db.prepare('SELECT * FROM staff_requests WHERE id=?').get(id);
   const ticket = id => db.prepare('SELECT * FROM support_tickets WHERE id=?').get(id);
@@ -119,6 +121,7 @@ function openCommunityStore(db) {
     rememberLock(channel, previous) { db.prepare('INSERT OR IGNORE INTO channel_locks VALUES(?,?)').run(channel,previous); },
     forgetLock(channel) { db.prepare('DELETE FROM channel_locks WHERE channel=?').run(channel); },
     ...activity,
+    ...dailyTop,
     xp(member) { return db.prepare('SELECT xp FROM server_xp WHERE member=?').get(member)?.xp ?? 0; },
     top() { return db.prepare('SELECT member,xp FROM server_xp ORDER BY xp DESC,member LIMIT 10').all(); }
   };
