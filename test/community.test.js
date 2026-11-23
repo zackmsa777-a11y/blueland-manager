@@ -96,12 +96,42 @@ test('lock mentions the channel in bold on success and retains the audit record'
 test('unlock mentions the channel on success and retains the audit record',async t=>{
   const h=fixture(t);
   const input={action:'unlock',actor:owner,channel,delivery:'unlock-reply'};
-  assert.equal(await h.run(input),`🔓 تم فتح القناة <#${channel}> بنجاح.`);
+  assert.equal(await h.run(input),`**🔓 تم فتح القناة <#${channel}> بنجاح.**`);
   assert.equal(h.store.community.fromEvent(input.delivery).target,channel);
   assert.deepEqual(h.calls,['unlock']);
   h.g.roomPermission=async()=>{throw new RuleError('لا يوجد منع كتابة مسجّل.');};
   await assert.rejects(h.run({...input,delivery:'unlock-failed'}),/لا يوجد منع كتابة/);
   assert.equal(h.store.community.fromEvent('unlock-failed'),undefined);
+});
+
+test('lock and unlock track separate text and announcement rooms and respect local permissions',async t=>{
+  const h=fixture(t);
+  const {ChannelType,Routes}=require('discord.js');
+  const otherRoom='200000000000000006';
+  const rooms=new Map(), overwrites=new Map();
+  const writes=[];
+  const guild={id:catalog.guildId,channels:{fetch:async id=>rooms.get(id)},members:{fetch:async id=>({id}),me:{id:catalog.botId}},client:{rest:{
+    async put(route,{body}) {overwrites.set(route,{allow:{bitfield:BigInt(body.allow)},deny:{bitfield:BigInt(body.deny)}});writes.push(route);},
+    async delete(route) {overwrites.delete(route);writes.push(route);}
+  }}};
+  const routeFor=id=>Routes.channelPermission(id,guild.id);
+  for(const [id,type] of [[channel,ChannelType.GuildText],[otherRoom,ChannelType.GuildAnnouncement]]) {
+    rooms.set(id,{type,guild,guildId:guild.id,permissionsFor:member=>({has:()=>member.id!==outsider}),
+      permissionOverwrites:{cache:{get:()=>overwrites.get(routeFor(id))}}});
+  }
+  const gateway=communityGateway(()=>guild,h.g.context);
+  const run=commandRunner({store:h.store,community:createCommunity(h.store,gateway,h.service)});
+  const use=(action,room,tag)=>run({action,channel:room,actor:owner,delivery:tag});
+  assert.equal(await use('lock',channel,'lock-one'),`**🔒 تم قفل القناة <#${channel}> بنجاح.**`);
+  await assert.rejects(use('unlock',otherRoom,'wrong-room'),/لا يوجد منع كتابة/);
+  assert.equal(await use('lock',otherRoom,'lock-two'),`**🔒 تم قفل القناة <#${otherRoom}> بنجاح.**`);
+  assert.equal(await use('unlock',otherRoom,'unlock-two'),`**🔓 تم فتح القناة <#${otherRoom}> بنجاح.**`);
+  assert.ok(overwrites.get(routeFor(channel)).deny.bitfield & P.SendMessages);
+  assert.equal(await use('unlock',channel,'unlock-one'),`**🔓 تم فتح القناة <#${channel}> بنجاح.**`);
+  assert.equal(overwrites.size,0);
+  assert.deepEqual(writes,[channel,otherRoom,otherRoom,channel].map(routeFor));
+  await assert.rejects(gateway.roomPermission({ctx:await h.g.context(outsider),action:'lock',channel:otherRoom,db:h.store.community}),{status:403});
+  assert.equal(overwrites.size,0);
 });
 
 test('removing any helper or raising its native permission bits blocks a partial restored ladder',()=>{
