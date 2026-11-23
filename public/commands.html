@@ -20,9 +20,12 @@
   <header class="guide-top"><span>لوحة التحكم / دليل الأوامر</span><a href="/" class="button quiet">الرجوع للوحة</a></header>
   <div class="guide-content">
     <p class="guide-eyebrow">مركز أوامر البوت</p><h1>دليل الأوامر</h1><p class="guide-muted">ابحث عن أمر، راجع الخانات والصلاحيات، أو أضف اختصارًا إذا كنت مخوّل.</p>
-    <section class="guide-controls" aria-label="البحث والتصفية"><label class="guide-search" data-icon="search"><input id="guide-search" dir="auto" aria-label="ابحث باسم الأمر أو اختصاره" placeholder="ابحث باسم الأمر أو اختصاره…" autocomplete="off"><kbd>/</kbd></label><div id="guide-categories" class="guide-categories"></div></section>
-    <div class="guide-results-head"><h2>الأوامر</h2><span id="guide-count" class="guide-muted" aria-live="polite"></span></div><p id="guide-status" role="status" class="guide-message"></p>
-    <div class="guide-catalog"><div class="guide-list" id="guide-list" aria-label="قائمة الأوامر"></div><article class="guide-detail" id="guide-detail" aria-label="تفاصيل الأمر" hidden></article></div>
+    <p id="guide-status" role="status" class="guide-message guide-access">جارٍ تحميل دليل الأوامر…</p>
+    <div id="guide-workspace" hidden>
+      <section class="guide-controls" aria-label="البحث والتصفية"><label class="guide-search" data-icon="search"><input id="guide-search" dir="auto" aria-label="ابحث باسم الأمر أو اختصاره" placeholder="ابحث باسم الأمر أو اختصاره…" autocomplete="off"><kbd>/</kbd></label><div id="guide-categories" class="guide-categories"></div></section>
+      <div class="guide-results-head"><h2>الأوامر</h2><span id="guide-count" class="guide-muted" aria-live="polite"></span></div>
+      <div class="guide-catalog"><div class="guide-list" id="guide-list" role="region" aria-label="قائمة الأوامر"></div><article class="guide-detail" id="guide-detail" aria-labelledby="guide-detail-title" hidden></article></div>
+    </div>
   </div>
 </main>
 </div>

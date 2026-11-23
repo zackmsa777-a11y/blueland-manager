@@ -31,7 +31,8 @@ function showDetail(c){
   const panel=$('#guide-detail');panel.replaceChildren();panel.hidden=!c;if(!c)return;
   const box=make('div',null,'detail-main');
   const top=make('div',null,'detail-top');top.append(make('p','تفاصيل الأمر','guide-eyebrow'),chip(c.name));
-  box.append(top,make('h2',c.desc),make('p',c.access,'guide-muted'));
+  const heading=make('h2',c.desc);heading.id='guide-detail-title';heading.tabIndex=-1;
+  box.append(top,heading,make('p',c.access,'guide-muted'));
   const status=make('p',null,'guide-message');status.setAttribute('role','status');
   if(c.note||c.example) {
     const guide=section('طريقة الاستخدام');if(c.note)guide.append(make('p',c.note,'guide-muted'));
@@ -87,7 +88,15 @@ function draw(){
   const results=$('#guide-list');results.replaceChildren();
   if(!matches.length)results.append(make('p','مفيش أوامر مطابقة للبحث.','guide-empty'));
   for(const c of matches){
-    const b=button('','cmd-row',()=>{selected=c.name;draw();[...results.children].find(el=>el.dataset.name===selected)?.focus({preventScroll:true})});
+    const b=button('','cmd-row',()=>{
+      selected=c.name;
+      for(const row of results.querySelectorAll('.cmd-row')) row.setAttribute('aria-pressed',String(row===b));
+      showDetail(c);
+      if(matchMedia('(max-width:730px)').matches){
+        const title=$('#guide-detail-title');title.focus({preventScroll:true});
+        title.scrollIntoView({block:'nearest'});
+      }
+    });
     b.dataset.name=c.name;b.setAttribute('aria-pressed',String(c.name===selected));
     const body=make('span',null,'row-body');body.append(chip(c.name),make('span',c.desc,'guide-muted'));b.append(body);results.append(b);
   }
@@ -101,7 +110,8 @@ function draw(){
     const b=button(name,'chip',()=>{category=id;draw()});b.dataset.category=id;filters.append(b);
   }
   $('#guide-search').addEventListener('input',()=>{if($('#guide-search').value.trim())category='all';draw()});
-  document.addEventListener('keydown',e=>{if(e.key==='/'&&!e.ctrlKey&&!e.metaKey&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)){e.preventDefault();$('#guide-search').focus()}});
-  try{const data=await api('/api/command-guide');rows=data.commands;canEdit=data.canEdit;draw()}
-  catch(err){message.textContent=err.message;if(err.status===401){message.append(' ');const link=make('a','دخول الإدارة');link.href='/';message.append(link)}}
+  const workspace=$('#guide-workspace');
+  document.addEventListener('keydown',e=>{if(!workspace.hidden&&e.key==='/'&&!e.ctrlKey&&!e.metaKey&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)){e.preventDefault();$('#guide-search').focus()}});
+  try{const data=await api('/api/command-guide');rows=data.commands;canEdit=data.canEdit;draw();workspace.hidden=false;message.textContent=''}
+  catch(err){message.textContent=err.message;if(err.status===401){const link=make('a','دخول الإدارة','button primary');link.href='/';message.append(link)}}
 })();
