@@ -6,8 +6,9 @@ const {RuleError} = require('./ladder');
 const {commandName, subcommandName} = require('./command-aliases');
 const {games, moves, createGame, start, eligiblePlayers, choose, ready, advance,
   spinRoulette, stopRoulette, resolveRoulette} = require('./game-rules');
-const {gamePanel, privateRole, voteMenu, rouletteMenu} = require('./game-view');
-const {rouletteBanner, rouletteAvatar} = require('./roulette-media');
+const {gamePanel, privateRole, voteMenu} = require('./game-view');
+const {CHOICE_MS, roulettePage, rouletteChoice} = require('./roulette-round');
+const {rouletteBanner, rouletteAvatar, rouletteBackdrop} = require('./roulette-media');
 const {rouletteEmojis} = require('./roulette-emoji');
 const {shopPanel} = require('./roulette-shop');
 
@@ -99,15 +100,19 @@ function createDiscordGames(economy) {
     if (!stopRoulette(game)) return;
     const turn = game.round;
     const player = game.roulettePlayer;
+    game.roulettePage = 0;
+    game.rouletteDeadline = null;
     publish(game).then(() => {
       if (!active(game) || game.round !== turn || game.rouletteStage !== 'choose') return;
-      rouletteTimer(game, 20_000, () => finishSpin(game, player, 'random'));
+      game.rouletteDeadline = Date.now() + CHOICE_MS;
+      rouletteTimer(game, CHOICE_MS, () => finishSpin(game, player, 'idle'));
     });
   }
 
   function finishSpin(game, user, action, target) {
     const picked = game.roulettePlayer;
     if (!resolveRoulette(game, user, action, target)) return false;
+    game.rouletteDecision = {actor: user, action};
     clearTimeout(game.timer);
     if (game.phase === 'done') {
       release(game);
@@ -176,9 +181,10 @@ function createDiscordGames(economy) {
     try {
       await i.deferReply();
       if (kind === 'roulette') {
-        const [banner, emojis] = await Promise.all([rouletteBanner(i.client), rouletteEmojis(i.guild)]);
+        const [banner, emojis, backdrop] = await Promise.all([rouletteBanner(i.client), rouletteEmojis(i.guild), rouletteBackdrop(i.client)]);
         game.rouletteBanner = banner;
         game.rouletteEmojis = emojis;
+        game.rouletteBackdrop = backdrop;
       }
       game.message = await i.editReply(gamePanel(game));
       if (active(game)) schedule(game);
@@ -193,7 +199,7 @@ function createDiscordGames(economy) {
     const [, id, roundId, action] = i.customId.split(':');
     const user = i.user.id;
     const fail = content => i.reply({...privateReply, content});
-    const select = action === 'target' || action === 'roulette-target';
+    const select = action === 'target';
     if (!game?.message || game.id !== id || String(game.round) !== roundId ||
         (select ? !i.isStringSelectMenu() : !i.isButton() || game.message.id !== i.message.id)) {
       return fail('هذي اللوحة أو الجولة انتهت. استخدم اللوحة الحالية.');
@@ -234,10 +240,33 @@ function createDiscordGames(economy) {
     }
     if (game.kind === 'roulette') {
       if (game.rouletteStage !== 'choose' || user !== game.roulettePlayer) return fail('الاختيار للاعب اللي وقفت عليه العجلة بس.');
-      if (action === 'roulette-kick') return i.reply({...privateReply, ...rouletteMenu(game)});
+      if (game.rouletteDeadline === null) return fail('انتظر ظهور لوحة الاختيار.');
+      if (Date.now() >= game.rouletteDeadline) {
+        finishSpin(game, user, 'idle');
+        return fail('انتهت مهلة الاختيار.');
+      }
+      const {page, count, targets} = roulettePage(game);
+      const detail = i.customId.split(':')[4];
+      if (action === 'roulette-prev' || action === 'roulette-next') {
+        const next = page + (action === 'roulette-next' ? 1 : -1);
+        if (detail !== String(page) || next < 0 || next >= count) return fail('هذه الصفحة تغيّرت أو ما فيه صفحة ثانية بهذا الاتجاه.');
+        const ack = i.deferUpdate();
+        game.roulettePage = next;
+        const version = game.version;
+        game.edits = game.edits.then(async () => {
+          if (active(game) && version === game.version) {
+            await game.message.edit({...rouletteChoice(game), allowedMentions: {parse: []}});
+          }
+        }).catch(() => {
+          if (active(game) && version === game.version) game.roulettePage = page;
+        });
+        return ack;
+      }
       const choice = {'roulette-target': 'kick', 'roulette-leave': 'leave', 'roulette-random': 'random'}[action];
-      if (!choice || !finishSpin(game, user, choice, i.values?.[0])) return fail('الاختيار غير متاح في هذي الجولة.');
-      return select ? i.update({content: 'تم إخراج اللاعب من اللعبة.', components: []}) : i.deferUpdate();
+      if (!choice || (choice === 'kick' && !targets.includes(detail)) || !finishSpin(game, user, choice, detail)) {
+        return fail('الاختيار غير متاح في هذي الصفحة أو الجولة.');
+      }
+      return i.deferUpdate();
     }
     if (game.kind === 'mafia' && action === 'role') {
       if (!game.players.has(user)) return fail('بطاقات الأدوار للاعبين المسجلين.');

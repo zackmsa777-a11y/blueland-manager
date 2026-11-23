@@ -75,4 +75,43 @@ function rouletteAvatar(url) {
   });
 }
 
-module.exports = {rouletteBanner, rouletteAvatar};
+// Resolve the owner's star background from its Discord message, never a stale signed URL.
+let backdropPromise;
+function rouletteBackdrop(client) {
+  if (!client?.channels?.fetch) return Promise.resolve(null);
+  if (!backdropPromise) {
+    const signal = AbortSignal.timeout(2200);
+    backdropPromise = bounded(signal, async () => {
+      const channel = await client.channels.fetch(sourceChannel);
+      const message = await channel?.messages?.fetch({message: '1574154852500504626', cache: false, force: true});
+      const file = message?.attachments?.get('1574154851842003155');
+      if (!file) return null;
+      const url = new URL(file.url);
+      if (url.protocol !== 'https:' || !hosts.has(url.hostname) || url.port || url.username || url.password ||
+          url.pathname !== `/attachments/${sourceChannel}/1574154851842003155/IMG_3470.jpg`) return null;
+      const response = await fetch(url, {redirect: 'error', signal});
+      const limit = 128_000;
+      if (!response.ok || response.headers.get('content-type')?.split(';')[0].trim() !== 'image/jpeg' ||
+          Number(response.headers.get('content-length')) > limit || !response.body) {
+        await response.body?.cancel();
+        return null;
+      }
+      let size = 0;
+      const chunks = [];
+      for await (const chunk of response.body) {
+        size += chunk.length;
+        if (size > limit) return null;
+        chunks.push(chunk);
+      }
+      const jpeg = Buffer.concat(chunks, size);
+      if (size < 6 || jpeg.subarray(0, 3).toString('hex') !== 'ffd8ff' || jpeg.subarray(-2).toString('hex') !== 'ffd9') return null;
+      return `data:image/jpeg;base64,${jpeg.toString('base64')}`;
+    }).then(result => {
+      if (!result) backdropPromise = null;
+      return result;
+    });
+  }
+  return backdropPromise;
+}
+
+module.exports = {rouletteBanner, rouletteAvatar, rouletteBackdrop};

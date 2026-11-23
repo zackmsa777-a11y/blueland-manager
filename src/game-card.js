@@ -159,8 +159,8 @@ function renderRouletteLobby(banner) {
   return new Resvg(rouletteLobbySvg(artwork), {font}).render().asPng();
 }
 
-function renderRouletteResult(names, selected, avatar) {
-  return new Resvg(rouletteWheelSvg(names, selected, 0, undefined, avatar), {font}).render().asPng();
+function renderRouletteResult(names, selected, avatar, backdrop) {
+  return new Resvg(rouletteWheelSvg(names, selected, 0, undefined, avatar, backdrop), {font}).render().asPng();
 }
 
 function gifImage(pixels, side, delay) {
@@ -222,7 +222,7 @@ function indexedPixels(image, side) {
   return pixels;
 }
 
-function renderRouletteSpin(names, selected) {
+function renderRouletteSpin(names, selected, backdrop) {
   const side = 344;
   const header = Buffer.alloc(13);
   header.write('GIF89a');
@@ -232,7 +232,7 @@ function renderRouletteSpin(names, selected) {
   const frames = [header, paletteBytes];
   for (let frame = 0; frame < 18; frame++) {
     const turn = -4 * Math.PI * (1 - frame / 17) ** 2;
-    const image = new Resvg(rouletteWheelSvg(names, selected, turn, side), {font}).render();
+    const image = new Resvg(rouletteWheelSvg(names, selected, turn, side, undefined, backdrop), {font}).render();
     frames.push(gifImage(indexedPixels(image, side), side, frame === 17 ? 40 : 8));
   }
   return Buffer.concat([...frames, Buffer.from([0x3b])]);

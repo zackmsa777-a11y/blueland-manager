@@ -3,7 +3,7 @@
 const {randomInt} = require('node:crypto');
 
 const games = {
-  roulette: {name: 'الروليت', min: 2, max: 12},
+  roulette: {name: 'الروليت', min: 2, max: 160},
   chairs: {name: 'الكراسي', min: 2, max: 12},
   mafia: {name: 'المافيا', min: 5, max: 12},
   rps: {name: 'حجر ورقة مقص', min: 2, max: 2}
@@ -100,7 +100,7 @@ function rouletteTargets(game) {
 function resolveRoulette(game, user, action, target, random = randomInt) {
   if (game.phase !== 'play' || game.rouletteStage !== 'choose' || user !== game.roulettePlayer) return false;
   const targets = rouletteTargets(game);
-  const out = action === 'leave' ? user : action === 'random' ? pick(targets, random)
+  const out = action === 'leave' || action === 'idle' ? user : action === 'random' ? pick(targets, random)
     : action === 'kick' && targets.includes(target) ? target : null;
   if (!out) return false;
   eliminate(game, out);

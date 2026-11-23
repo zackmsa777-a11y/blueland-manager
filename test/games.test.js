@@ -167,25 +167,25 @@ test('roulette posts the wheel phases separately, pings only the selected player
   assert.match((await f.send(host, {customId: spinCancel, message: spin})).content, /انتهت/);
   const denied = await f.click(other, 'roulette-random');
   assert.equal(denied.flags, MessageFlags.Ephemeral);
-  const menu = await f.click(player, 'roulette-kick');
-  assert.equal(menu.flags, MessageFlags.Ephemeral);
-  const select = menu.components[0].components[0];
-  assert.deepEqual(select.options.map(option => option.value), [other]);
-  const invalid = await f.send(player, {customId: select.custom_id, values: [player]});
+  const target = f.button(`roulette-target:${other}`);
+  assert.equal(target.type, 2);
+  assert.equal(target.style, 1);
+  const invalid = await f.send(player, {customId: target.custom_id.replace(other, player)});
   assert.equal(invalid.flags, MessageFlags.Ephemeral);
-  await f.send(player, {customId: select.custom_id, values: [other]});
+  await f.click(player, `roulette-target:${other}`);
   assert.equal(f.posts.length, 4);
   assert.equal(new Set(f.posts.map(post => post.id)).size, 4);
   assert.ok(f.posts.every(post => post.payload.embeds === undefined));
   assert.deepEqual(f.posts[2].writes, [{components: []}]);
   assertPng(f.panel.files[0], 'roulette', [820, 500]);
   assert.match(f.description, /الفائز/);
-  assert.equal(f.panel.content, `**الفائز بالروليت** · <@${player}>`);
+  assert.equal(f.panel.content, `لقد اختار <@${player}> أن يطرد <@${other}> من اللعبة.\n**الفائز بالروليت** · <@${player}>`);
+  assert.deepEqual(f.panel.allowedMentions, {parse: [], users: [player, other]});
   assert.deepEqual(f.panel.components[0].components.map(component => component.custom_id), ['blgshop:bag', 'blgshop:shop']);
   assert.equal(f.timers.size, 0);
 });
 
-test('a roulette withdrawal posts a new spin and an expired choice removes a random opponent', async t => {
+test('a roulette withdrawal posts a new spin and an expired choice eliminates the inactive player', async t => {
   const f = fixture(t);
   await f.open('roulette');
   await f.click(guest, 'join');
@@ -201,10 +201,49 @@ test('a roulette withdrawal posts a new spin and an expired choice removes a ran
   await f.tick();
   const second = f.panel.content.match(/<@(\d+)>/)[1];
   assert.notEqual(second, first);
+  assert.match(f.panel.content, /50 ثانية/);
+  const winner = [host, guest, spectator].find(id => id !== first && id !== second);
   await f.tick();
-  assert.equal(f.panel.content, `**الفائز بالروليت** · <@${second}>`);
+  assert.equal(f.panel.content, `تم طرد <@${second}> من اللعبة بسبب عدم التفاعل.\n**الفائز بالروليت** · <@${winner}>`);
+  assert.deepEqual(f.panel.allowedMentions, {parse: [], users: [second]});
   assert.equal(f.posts.length, 6);
   assert.equal(f.timers.size, 0);
+});
+
+test('roulette caps at 160, paginates 159 opponents, and keeps one 50-second deadline', async t => {
+  const f = fixture(t);
+  let now = 1000;
+  t.mock.method(Date, 'now', () => now);
+  await f.open('roulette');
+  for (let n = 1; n < 160; n++) await f.click(String(BigInt(host) + BigInt(n)), 'join');
+  assert.equal(f.panel.content, '**(160 / 160)**');
+  const outsider = '200000000000000001';
+  assert.match((await f.click(outsider, 'join')).content, /اكتمل/);
+  await f.click(host, 'start');
+  await f.tick();
+  const player = f.panel.content.match(/<@(\d+)>/)[1];
+  const [timer] = f.timers.keys();
+  const attachment = f.panel.files[0];
+  const targets = () => f.panel.components.flatMap(r => r.components).filter(b => b.custom_id.includes(':roulette-target:'));
+  assert.equal(targets().length, 12);
+  assert.equal(f.button('roulette-prev:0').disabled, true);
+  const staleTarget = targets()[0].custom_id;
+  assert.equal((await f.click(outsider, 'roulette-next:0')).flags, MessageFlags.Ephemeral);
+  now += 49_000;
+  for (let p = 0; p < 13; p++) await f.click(player, `roulette-next:${p}`);
+  assert.equal(f.posts.length, 3);
+  assert.equal(f.panel.files[0], attachment);
+  assert.equal(targets().length, 3);
+  assert.match(f.panel.content, /الصفحة 14 \/ 14/);
+  assert.equal(f.button('roulette-next:13').disabled, true);
+  assert.match((await f.send(player, {customId: staleTarget})).content, /غير متاح/);
+  await f.click(player, 'roulette-prev:13');
+  assert.match(f.panel.content, /الصفحة 13 \/ 14/);
+  assert.equal([...f.timers.keys()][0], timer);
+  now += 1000;
+  assert.match((await f.send(player, {customId: targets()[0].custom_id})).content, /انتهت مهلة/);
+  assert.match(f.panel.content, new RegExp(`تم طرد <@${player}> من اللعبة بسبب عدم التفاعل`));
+  assert.match(f.panel.content, /159 في اللعب/);
 });
 
 test('roulette cancel removes controls without replacing the image or posting another wheel', async t => {
@@ -228,7 +267,8 @@ test('roulette random button removes an opponent, not the selected player', asyn
   await f.tick();
   const player = f.panel.content.match(/<@(\d+)>/)[1];
   await f.click(player, 'roulette-random');
-  assert.equal(f.panel.content, `**الفائز بالروليت** · <@${player}>`);
+  assert.match(f.panel.content, new RegExp(`^لقد اختار <@${player}> أن يطرد`));
+  assert.ok(f.panel.content.endsWith(`**الفائز بالروليت** · <@${player}>`));
 });
 
 test('roulette awards points to the winner, who can open a private bag and buy a frame', async t => {

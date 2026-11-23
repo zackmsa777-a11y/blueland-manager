@@ -75,7 +75,7 @@ function cardMessage(card, description) {
   };
 }
 
-const {rouletteTargets} = require('./game-rules');
+const {rouletteChoice, rouletteNotice} = require('./roulette-round');
 const {renderRouletteSpin, renderRouletteLobby, renderRouletteResult, renderRouletteWinner} = require('./game-card');
 
 function withRouletteEmoji(game, key, control) {
@@ -103,45 +103,35 @@ function rouletteLobby(game, includeImage) {
 }
 
 function roulettePanel(game) {
-  const allowedMentions = {parse: []};
+  const notice = rouletteNotice(game);
   if (game.phase === 'cancelled') {
-    return {content: `**أُغلقت لعبة الروليت** · ${game.endReason}`, allowedMentions, components: []};
+    return {content: `**أُغلقت لعبة الروليت** · ${game.endReason}`, allowedMentions: {parse: []}, components: []};
   }
   if (game.phase === 'done') {
     const name = getName(game, game.winner);
     const reward = game.winnerReward || 0;
     const points = reward ? ` · +${reward} نقاط` : '';
     const card = renderRouletteWinner({name, avatar: game.winnerAvatar, reward, style: game.winnerStyle});
-    return {content: `**الفائز بالروليت** · <@${game.winner}>${points}`, allowedMentions,
+    return {content: `${notice.text}**الفائز بالروليت** · <@${game.winner}>${points}`, allowedMentions: notice.allowedMentions,
       components: [rouletteEconomyButtons(game)],
       files: [{attachment: card, name: 'roulette.png', description: `الفائز · ${name}${points}`}]};
   }
   const names = game.alive.map(id => getName(game, id));
   const selected = game.alive.indexOf(game.roulettePlayer);
-  const cancel = rouletteButton(game, 'cancel', 'إلغاء', 4);
   const turn = `الجولة ${game.round} · ${names.length} في اللعب`;
   if (game.rouletteStage === 'spin') {
-    const footer = game.lastOut ? `خرج <@${game.lastOut}> · العجلة تدور` : 'العجلة تدور لاختيار لاعب';
     return {
-      content: `**الروليت · ${turn}**\n${footer}`, allowedMentions, components: [row([cancel])],
-      files: [{attachment: renderRouletteSpin(names, selected), name: 'roulette-spin.gif',
-        description: `الروليت · ${turn} · العجلة تدور` }]
+      content: `${notice.text}**الروليت · ${turn}**\nالعجلة تدور لاختيار لاعب`, allowedMentions: notice.allowedMentions,
+      components: [row([rouletteButton(game, 'cancel', 'إلغاء', 4)])],
+      files: [{attachment: renderRouletteSpin(names, selected, game.rouletteBackdrop), name: 'roulette-spin.gif',
+        description: `الروليت · ${turn} · العجلة تدور`}]
     };
   }
   return {
-    content: `**الروليت · ${turn}**\n<@${game.roulettePlayer}> وقفت العجلة عليك! اختار خلال 20 ثانية.`,
-    allowedMentions: {parse: [], users: [game.roulettePlayer]},
-    files: [{attachment: renderRouletteResult(names, selected, game.rouletteAvatar), name: 'roulette.png',
-      description: `الروليت · ${turn} · العجلة توقفت على ${getName(game, game.roulettePlayer)}`}],
-    components: [row([rouletteButton(game, 'roulette-kick', 'إخراج لاعب', 1), rouletteButton(game, 'roulette-leave', 'انسحاب', 4),
-      rouletteButton(game, 'roulette-random', 'اختيار عشوائي'), cancel])]
+    ...rouletteChoice(game), allowedMentions: {parse: [], users: [game.roulettePlayer]},
+    files: [{attachment: renderRouletteResult(names, selected, game.rouletteAvatar, game.rouletteBackdrop), name: 'roulette.png',
+      description: `الروليت · ${turn} · العجلة توقفت على ${getName(game, game.roulettePlayer)}`}]
   };
-}
-
-function rouletteMenu(game) {
-  const options = rouletteTargets(game).map(value => ({label: Array.from(getName(game, value)).slice(0, 90).join(''), value}));
-  return {content: 'مين تحب يخرج من اللعبة؟', components: [row([{type: 3,
-    custom_id: customId(game, 'roulette-target'), placeholder: 'اختر لاعبًا', options}])]};
 }
 
 function gamePanel(game, {includeLobbyImage = true} = {}) {
@@ -170,4 +160,4 @@ function voteMenu(game, id) {
   return {components: [row([{type: 3, custom_id: customId(game, 'target'), placeholder: 'اختر لاعبًا', options}])]};
 }
 
-module.exports = {customId, gamePanel, privateRole, voteMenu, rouletteMenu};
+module.exports = {customId, gamePanel, privateRole, voteMenu};

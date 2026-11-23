@@ -23,13 +23,11 @@ function wheelBody(names, selected, turn, avatar) {
     const from = offset + step * i;
     const mid = from + step / 2;
     const selectedWedge = stop && i === selected;
-    const fill = selectedWedge ? '#1c6699' : i % 2 ? '#c7d8ed' : '#174070';
-    const color = !selectedWedge && i % 2 ? '#102341' : '#ffffff';
+    const fill = selectedWedge ? '#569bd1' : ['#102341', '#174070', '#1c6699', '#265887'][i % 4];
     const tilt = mid * 180 / Math.PI + (Math.cos(mid) < 0 ? 180 : 0);
     const [labelX, labelY] = xy(143, mid).split(' ');
-    const fontSize = count > 8 ? 16 : 19;
-    return `<path d="M220 220 L${xy(199, from)} A199 199 0 0 1 ${xy(199, from + step)} Z" fill="${fill}" stroke="#edf6ff" stroke-width="2.3"/>` +
-      `<g transform="translate(${labelX} ${labelY}) rotate(${tilt.toFixed(3)})">${text(names[i], 0, 5, fontSize, color, count > 8 ? 12 : 14)}</g>`;
+    const label = count <= 18 ? `<g transform="translate(${labelX} ${labelY}) rotate(${tilt.toFixed(3)})">${text(names[i], 0, 5, count > 8 ? 14 : 18, '#ffffff', count > 8 ? 11 : 14)}</g>` : '';
+    return `<path d="M220 220 L${xy(199, from)} A199 199 0 0 1 ${xy(199, from + step)} Z" fill="${fill}" stroke="#c7d8ed" stroke-opacity=".65" stroke-width="${count > 40 ? .55 : 1.5}"/>${label}`;
   }).join('');
   const mark = avatar
     ? `<defs><clipPath id="roulette-avatar"><circle cx="220" cy="220" r="55"/></clipPath></defs><image x="165" y="165" width="110" height="110" xlink:href="${avatar}" clip-path="url(#roulette-avatar)" preserveAspectRatio="xMidYMid slice"/>`
@@ -38,8 +36,20 @@ function wheelBody(names, selected, turn, avatar) {
     '<path d="M 434 205 L 410 220 L 434 235 Z" fill="#edf6ff" stroke="#569bd1" stroke-width="2" stroke-linejoin="round"/>';
 }
 
-function rouletteWheelSvg(names, selected, turn = 0, size = SIZE, avatar) {
-  return svg(size, size, `0 0 ${SIZE} ${SIZE}`, wheelBody(names, selected, turn, avatar));
+const stars = Array.from({length: 100}, (_, i) => {
+  const x = 6 + (i * 137 % 428), y = 6 + (i * 89 % 428);
+  return i % 12 === 0
+    ? `<path d="M${x - 4} ${y}h8m-4 -4v8" stroke="#cbeaff" stroke-opacity=".76"/>`
+    : `<circle cx="${x}" cy="${y}" r="${i % 3 === 0 ? 1.3 : .6}" fill="#a4d7ff" opacity=".68"/>`;
+}).join('');
+
+function rouletteWheelSvg(names, selected, turn = 0, size = SIZE, avatar, backdrop) {
+  const sky = '<defs><radialGradient id="sky"><stop stop-color="#174070"/><stop offset="1" stop-color="#06132a"/></radialGradient><clipPath id="wheel-frame"><rect width="440" height="440" rx="18"/></clipPath></defs>' +
+    '<rect width="440" height="440" rx="18" fill="url(#sky)"/>' + (backdrop
+    ? `<image width="440" height="440" xlink:href="${backdrop}" preserveAspectRatio="xMidYMid slice" clip-path="url(#wheel-frame)"/>` : '');
+  const label = turn === 0 && selected >= 0 && names.length > 18
+    ? `<rect x="80" y="368" width="280" height="42" rx="12" fill="#06152d" stroke="#82cfff"/>${text(names[selected], 220, 395, 20, '#ffffff', 23)}` : '';
+  return svg(size, size, `0 0 ${SIZE} ${SIZE}`, sky + wheelBody(names, selected, turn, avatar) + stars + label);
 }
 
 function rouletteLobbySvg(banner) {

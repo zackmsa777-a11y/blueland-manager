@@ -53,6 +53,16 @@ test('the stopped wheel renders player names and can use a Discord avatar in the
   assert.notDeepEqual(plain, withAvatar);
 });
 
+test('the stopped wheel renders 160 players and accepts a custom star background', () => {
+  const roster = Array.from({length: 160}, (_, i) => `Player ${i + 1}`);
+  const plain = renderRouletteResult(roster, 159);
+  const background = `data:image/png;base64,${artwork.toString('base64')}`;
+  const themed = renderRouletteResult(roster, 159, undefined, background);
+  assert.deepEqual([themed.readUInt32BE(16), themed.readUInt32BE(20)], [440, 440]);
+  assert.notDeepEqual(themed, plain);
+  assert.notDeepEqual(themed, renderRouletteResult(roster, 0, undefined, background));
+});
+
 test('roulette avatar loading does not request a non-Discord URL', async t => {
   const request = t.mock.method(global, 'fetch', async () => { throw new Error('unexpected request'); });
   assert.equal(await rouletteAvatar('https://example.test/embed/avatars/0.png'), null);
