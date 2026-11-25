@@ -11,6 +11,7 @@ const {createVoiceActivity}=require('./activity-top');
 const {createDailyTopReport}=require('./activity-report');
 const { createDiscordGames } = require('./discord-games');
 const { createShortcutHandler } = require('./shortcut-dispatch');
+const { createLxrStart } = require('./lxr-start');
 
 function connectDiscord(store, env) {
   let client, api, timer, recovering = false, cachedDirectory, refresh, validUntil = 0, attemptedToken;
@@ -78,6 +79,12 @@ function connectDiscord(store, env) {
   const shortcuts=createShortcutHandler({shortcuts:store.shortcuts,context,readyGuild,service,community,run,games,
     lookupTicket:channel=>store.community.ticketByChannel(channel)});
   const tickets=require('./discord-tickets').createDiscordTickets({db:store.community,community,readyGuild});
+  const lxrStart=createLxrStart({readyGuild});
+  let lxrStartReady=false;
+  const syncLxrStart=()=>{
+    if (!lxrStartReady && client?.isReady()) void lxrStart.publish().then(()=>{lxrStartReady=true;})
+      .catch(err=>console.warn('LXR start panel:',err.code || err.message));
+  };
   const onMessage=createMessageHandler({authorize:community.dashboard,service,store,publicOrigin:env.PUBLIC_ORIGIN,run,parse:parseChat,shortcuts,ticketMessages:tickets.text});
   const voice=createVoiceActivity(store.community);
   let voiceTimer;
@@ -139,7 +146,7 @@ function connectDiscord(store, env) {
           return;
         }
         if (i.guildId!==catalog.guildId || (i.isChatInputCommand() && i.commandGuildId!==catalog.guildId)) return;
-        if (await tickets.interaction(i) || await games.handle(i)) return;
+        if (await lxrStart.handle(i) || await tickets.interaction(i) || await games.handle(i)) return;
         if (!i.isChatInputCommand() || !commands.some(c=>c.name===i.commandName)) return;
         try {
           await i.deferReply({flags:api.MessageFlags.Ephemeral});
@@ -166,8 +173,9 @@ function connectDiscord(store, env) {
         recover().catch(() => {});
         sync().catch(()=>{});
         void syncTickets();
+        syncLxrStart();
         clearInterval(timer);
-        timer = setInterval(() => { recover().catch(() => {}); sync().catch(()=>{}); void syncTickets(); }, 60_000);
+        timer = setInterval(() => { recover().catch(() => {}); sync().catch(()=>{}); void syncTickets(); syncLxrStart(); }, 60_000);
         timer.unref();
         const checkpoint=()=>{
           const guild=client.isReady()?client.guilds.cache.get(catalog.guildId):null;
