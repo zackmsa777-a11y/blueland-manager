@@ -4,6 +4,7 @@ const {PermissionFlagsBits: P} = require('discord.js');
 const {catalog,roles,compareRoles,planPromotion,RuleError} = require('./ladder');
 const {memberAccess} = require('./promotions');
 const {staffGrade,progress} = require('./ticket-points');
+const ticketUi=require('./ticket-ui');
 
 const helper = Object.fromEntries(catalog.roles.filter(r=>r.kind==='permission').map(r=>[r.label,r.id]));
 const rules = {
@@ -106,13 +107,14 @@ function createCommunity(store, gateway, promotions) {
     const legacyClaim=actor===ctx.ownerId || ctx.actor.roles.includes(db.settings().supportRole);
     const legacyTickets=permits(ctx,ctx.actor,P.ManageChannels) || legacyClaim;
     const complaintTickets=actor===ctx.ownerId;
-    const technicalTickets=complaintTickets || ctx.actor.roles.includes(require('./ticket-ui').SUPPORT);
-    const tickets=legacyTickets || technicalTickets;
+    const staffComplaints=complaintTickets || ctx.actor.roles.includes(ticketUi.MANAGERS);
+    const technicalTickets=complaintTickets || ctx.actor.roles.includes(ticketUi.SUPPORT);
+    const tickets=legacyTickets || technicalTickets || staffComplaints;
     const cases=config || permits(ctx,ctx.actor,P.ModerateMembers) || ctx.actor.roles.includes(helper['#warn/unwarn']);
     const grade=staffGrade(ctx.actor.roles);
     if (ctx.actor.bot || !(grade || review || tickets || cases || config)) throw new RuleError('دخول الطاقم يحتاج إلى رول مخوّل في BlueLand.',403);
     return {id:actor,name:ctx.actor.name,points:progress(db,actor,grade,ctx.ownerId),
-      rights:{review,config,tickets,cases,legacyTickets,legacyClaim,complaintTickets,technicalTickets,ticketAdmin:permits(ctx,ctx.actor,0n)}};
+      rights:{review,config,tickets,cases,legacyTickets,legacyClaim,complaintTickets,staffComplaints,technicalTickets,ticketAdmin:permits(ctx,ctx.actor,0n)}};
   }
   async function submit({actor,kind,body,delivery}) {
     if (!Object.hasOwn(kinds,kind)) throw new RuleError('اختر نوع طلب صالحًا.');
@@ -190,9 +192,10 @@ function createCommunity(store, gateway, promotions) {
     });
   }
   async function ticketStaff(actor,row) {
-    if (row.kind!=='technical' && row.kind!=='complaint') return support(actor);
+    if (row.kind==='legacy') return support(actor);
     const ctx=await gateway.context(actor);
-    if (ctx.actor.bot || (actor!==ctx.ownerId && (row.kind==='complaint' || !ctx.actor.roles.includes(require('./ticket-ui').SUPPORT)))) {
+    const role=Object.hasOwn(ticketUi.kinds,row.kind) && ticketUi.departmentRole(row.kind);
+    if (ctx.actor.bot || (actor!==ctx.ownerId && (!role || !ctx.actor.roles.includes(role)))) {
       throw new RuleError('هذا الإجراء للطاقم المخوّل على هذه التذكرة فقط.',403);
     }
     return ctx;
@@ -234,7 +237,7 @@ function createCommunity(store, gateway, promotions) {
       console.warn('Ticket promotion',award.id,err instanceof RuleError?err.message:err.code || err.name);
     } finally { awarding.delete(member); }
   }
-  async function ticketAction(actor,id,action) {
+  async function ticketAction(actor,id,action,{noticeId}={}) {
     const row=db.ticket(rowId(id));
     if (!row) throw new RuleError('التذكرة غير موجودة.',404);
     const ctx=action==='close' && actor===row.owner ? null : await ticketStaff(actor,row);
@@ -251,20 +254,35 @@ function createCommunity(store, gateway, promotions) {
       if (['claim','unclaim'].includes(action)) {
         if (current.state!=='open') throw new RuleError('الاستلام للتذاكر المفتوحة فقط.',409);
         if (action==='claim') {
-          const supportRole=current.kind==='technical'?require('./ticket-ui').SUPPORT:db.settings().supportRole;
+          const supportRole=ticketUi.departmentRole(current.kind,db.settings());
           if (actor===current.owner || (actor!==ctx.ownerId && !ctx.actor.roles.includes(supportRole)))
-            throw new RuleError('استلام التذكرة لرول الدعم، ولا يمكنك استلام تذكرتك.',403);
+            throw new RuleError('الاستلام للطاقم المخوّل على هذا القسم، ولا يمكنك استلام تذكرتك.',403);
           if (current.assignee && current.assignee!==actor) throw new RuleError('سبق لعضو آخر من الدعم استلام هذه التذكرة.',409);
           if (!current.assignee) {
-            const grade=actor===ctx.ownerId?null:staffGrade(ctx.actor.roles);
-            db.startClaim(current.id,actor,grade?.id || null);
+            const grade=actor===ctx.ownerId || (current.kind==='staff-complaint' && !ctx.actor.roles.includes(ticketUi.SUPPORT))
+              ?null:staffGrade(ctx.actor.roles);
+            db.startClaim(current.id,actor,grade?.id || null,noticeId);
           }
         } else {
           if (current.assignee!==actor) throw new RuleError('إعادة التذكرة متاحة للمستلم فقط.',403);
           db.undoClaim(current.id);
         }
         await finishClaim(current);
-        if (action==='claim') await advance(actor);
+        if (action==='claim') {
+          const assigned=db.ticket(row.id);
+          let noticeFailed=false;
+          const claim=db.claimChange(assigned.id);
+          if (noticeId && assigned.assignee===actor && claim?.member===actor && claim.notice_nonce) {
+            try {
+              await gateway.announceClaim(assigned,actor,claim.notice_nonce,claim.notice_attempted,
+                ()=>db.startClaimNotice(assigned.id,claim.notice_nonce));
+              db.finishClaimNotice(assigned.id,claim.notice_nonce);
+            }
+            catch { noticeFailed=true; }
+          }
+          await advance(actor);
+          return noticeFailed?{...assigned,noticeFailed}:assigned;
+        }
       } else {
         if (!['close','reopen'].includes(action)) throw new RuleError('إجراء التذكرة غير صالح.');
         if (ctx && current.assignee && current.assignee!==actor && !permits(ctx,ctx.actor,0n))
@@ -294,6 +312,7 @@ function createCommunity(store, gateway, promotions) {
         return;
       }
       if (!['add','remove'].includes(action)) throw new RuleError('إجراء تذكرة غير صالح.');
+      if (ticket.kind==='staff-complaint' && action==='add') throw new RuleError('لا يمكن إضافة ضيوف إلى تذكرة شكوى على إداري.',403);
       snowflake(target);
       const guest=db.ticketGuests(ticket.id).includes(target);
       if (action==='add' && ticket.state!=='open') throw new RuleError('لا يمكن إضافة عضو إلى تذكرة مغلقة.',409);

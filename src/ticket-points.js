@@ -39,6 +39,9 @@ function openTicketPoints(db) {
     INSERT OR IGNORE INTO ticket_claim_changes(ticket,member,synced)
       SELECT id,assignee,0 FROM support_tickets WHERE assignee IS NOT NULL AND channel IS NOT NULL;
   `);
+  const claimColumns=new Set(db.prepare('PRAGMA table_info(ticket_claim_changes)').all().map(column=>column.name));
+  if (!claimColumns.has('notice_nonce')) db.exec('ALTER TABLE ticket_claim_changes ADD COLUMN notice_nonce TEXT');
+  if (!claimColumns.has('notice_attempted')) db.exec('ALTER TABLE ticket_claim_changes ADD COLUMN notice_attempted INTEGER');
   function ticketBalance(member) {
     const {total,spent} = db.prepare(`
       SELECT (SELECT COALESCE(SUM(amount),0) FROM ticket_points WHERE member=?) AS total,
@@ -71,8 +74,10 @@ function openTicketPoints(db) {
   }
   return {ticketBalance,queueAdvancement,finishClaim,
     claimChange:id=>db.prepare('SELECT * FROM ticket_claim_changes WHERE ticket=?').get(id),
-    startClaim:(id,member,grade)=>db.prepare('INSERT INTO ticket_claim_changes(ticket,member,grade) VALUES(?,?,?)').run(id,member,grade),
-    undoClaim:id=>db.prepare('UPDATE ticket_claim_changes SET synced=0,restoring=1 WHERE ticket=?').run(id),
+    startClaim:(id,member,grade,nonce=null)=>db.prepare('INSERT INTO ticket_claim_changes(ticket,member,grade,notice_nonce) VALUES(?,?,?,?)').run(id,member,grade,nonce),
+    startClaimNotice:(id,nonce)=>db.prepare('UPDATE ticket_claim_changes SET notice_attempted=? WHERE ticket=? AND notice_nonce=? AND notice_attempted IS NULL').run(Date.now(),id,nonce),
+    finishClaimNotice:(id,nonce)=>db.prepare('UPDATE ticket_claim_changes SET notice_nonce=NULL,notice_attempted=NULL WHERE ticket=? AND notice_nonce=?').run(id,nonce),
+    undoClaim:id=>db.prepare('UPDATE ticket_claim_changes SET synced=0,restoring=1,notice_nonce=NULL,notice_attempted=NULL WHERE ticket=?').run(id),
     resyncClaim:id=>db.prepare('UPDATE ticket_claim_changes SET synced=0 WHERE ticket=?').run(id),
     saveClaimOverwrites:(id,plan)=>db.prepare('UPDATE ticket_claim_changes SET overwrites=? WHERE ticket=?').run(JSON.stringify(plan),id),
     pendingClaims:()=>db.prepare("SELECT s.* FROM support_tickets s JOIN ticket_claim_changes c ON c.ticket=s.id WHERE c.synced=0 AND s.state='open' AND s.channel IS NOT NULL").all(),

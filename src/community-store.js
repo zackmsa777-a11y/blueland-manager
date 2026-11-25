@@ -4,6 +4,15 @@ const { RuleError,catalog } = require('./ladder');
 const {createActivityStore}=require('./activity-top');
 const {openDailyTopReceipts}=require('./activity-report');
 
+// Persist kinds recognized by the previous build so its audience filters still apply.
+function effectiveTicket(row) {
+  if (!row) return row;
+  const {staff_complaint,reward_ticket,...ticket}=row;
+  if (ticket.kind==='complaint' && staff_complaint) ticket.kind='staff-complaint';
+  if (ticket.kind==='technical' && reward_ticket) ticket.kind='rewards';
+  return ticket;
+}
+
 const defaults = {
   levels: false,
   welcomeChannel: '',
@@ -26,13 +35,17 @@ function openCommunityStore(db) {
   const columns = new Set(db.prepare('PRAGMA table_info(support_tickets)').all().map(column=>column.name));
   if (!columns.has('kind')) db.exec("ALTER TABLE support_tickets ADD COLUMN kind TEXT NOT NULL DEFAULT 'legacy'");
   if (!columns.has('details')) db.exec("ALTER TABLE support_tickets ADD COLUMN details TEXT NOT NULL DEFAULT ''");
+  if (!columns.has('staff_complaint')) db.exec('ALTER TABLE support_tickets ADD COLUMN staff_complaint INTEGER NOT NULL DEFAULT 0 CHECK(staff_complaint IN (0,1))');
+  db.exec("UPDATE support_tickets SET kind='complaint',staff_complaint=1 WHERE kind='staff-complaint'");
+  if (!columns.has('reward_ticket')) db.exec('ALTER TABLE support_tickets ADD COLUMN reward_ticket INTEGER NOT NULL DEFAULT 0 CHECK(reward_ticket IN (0,1))');
+  db.exec("UPDATE support_tickets SET kind='technical',reward_ticket=1 WHERE kind='rewards'");
   db.exec('CREATE TABLE IF NOT EXISTS support_ticket_guests (ticket INTEGER NOT NULL, member TEXT NOT NULL, PRIMARY KEY(ticket,member)); CREATE TABLE IF NOT EXISTS support_ticket_panel (id INTEGER PRIMARY KEY CHECK(id=1), message TEXT NOT NULL)');
   const activity=createActivityStore(db);
   const dailyTop=openDailyTopReceipts(db);
   const ticketPoints=require('./ticket-points').openTicketPoints(db);
 
   const request = id => db.prepare('SELECT * FROM staff_requests WHERE id=?').get(id);
-  const ticket = id => db.prepare('SELECT * FROM support_tickets WHERE id=?').get(id);
+  const ticket = id => effectiveTicket(db.prepare('SELECT * FROM support_tickets WHERE id=?').get(id));
   const fromEvent = id => db.prepare('SELECT * FROM moderation_cases WHERE delivery=?').get(id);
   function record(delivery, action, actor, target, reason, ref = null) {
     db.prepare('INSERT OR IGNORE INTO moderation_cases(delivery,action,actor,target,reason,created,ref) VALUES(?,?,?,?,?,?,?)')
@@ -79,25 +92,30 @@ function openCommunityStore(db) {
     forgetTicketGuest(ticketId,member) { db.prepare('DELETE FROM support_ticket_guests WHERE ticket=? AND member=?').run(ticketId,member); },
     reserveTicket(delivery,owner,subject,kind='legacy',details='') {
       const replay=db.prepare('SELECT * FROM support_tickets WHERE delivery=?').get(delivery);
-      if (replay) return replay;
+      if (replay) return effectiveTicket(replay);
       const active=db.prepare("SELECT * FROM support_tickets WHERE owner=? AND state!='closed'").get(owner);
-      if (active) return active;
-      const result=db.prepare("INSERT INTO support_tickets(delivery,owner,subject,state,created,kind,details) VALUES(?,?,?,'opening',?,?,?)").run(delivery,owner,subject,Date.now(),kind,details);
+      if (active) return effectiveTicket(active);
+      const restricted=kind==='staff-complaint';
+      const reward=kind==='rewards';
+      const result=db.prepare("INSERT INTO support_tickets(delivery,owner,subject,state,created,kind,details,staff_complaint,reward_ticket) VALUES(?,?,?,'opening',?,?,?,?,?)")
+        .run(delivery,owner,subject,Date.now(),restricted?'complaint':reward?'technical':kind,details,Number(restricted),Number(reward));
       return ticket(result.lastInsertRowid);
     },
     setChannel(id, channel) {
       db.prepare("UPDATE support_tickets SET channel=?,state='open' WHERE id=? AND state='opening'").run(channel,id);
     },
     releaseOpening(id) { db.prepare("DELETE FROM support_tickets WHERE id=? AND state='opening'").run(id); },
-    ticketByChannel(channel) { return db.prepare('SELECT * FROM support_tickets WHERE channel=?').get(channel); },
+    ticketByChannel(channel) { return effectiveTicket(db.prepare('SELECT * FROM support_tickets WHERE channel=?').get(channel)); },
     ticketRemoved(channel) { db.prepare("UPDATE support_tickets SET state='closed',channel=NULL WHERE channel=?").run(channel); },
-    activeTicket(owner) { return db.prepare("SELECT * FROM support_tickets WHERE owner=? AND state!='closed'").get(owner); },
-    tickets() { return db.prepare("SELECT * FROM support_tickets ORDER BY CASE WHEN state='closed' THEN 1 ELSE 0 END, id DESC LIMIT 100").all(); },
-    transitioningTickets() { return db.prepare("SELECT * FROM support_tickets WHERE state IN ('opening','closing','reopening')").all(); },
+    activeTicket(owner) { return effectiveTicket(db.prepare("SELECT * FROM support_tickets WHERE owner=? AND state!='closed'").get(owner)); },
+    tickets() { return db.prepare("SELECT * FROM support_tickets ORDER BY CASE WHEN state='closed' THEN 1 ELSE 0 END, id DESC LIMIT 100").all().map(effectiveTicket); },
+    privateTicketChannels() { return db.prepare("SELECT channel FROM support_tickets WHERE kind='complaint' AND staff_complaint=1 AND channel IS NOT NULL").all().map(row=>row.channel); },
+    transitioningTickets() { return db.prepare("SELECT * FROM support_tickets WHERE state IN ('opening','closing','reopening')").all().map(effectiveTicket); },
     ticketState(id,previous,next) {
       return db.prepare('UPDATE support_tickets SET state=? WHERE id=? AND state=?').run(next,id,previous).changes;
     },
     ...ticketPoints,
+    pendingClaims:()=>ticketPoints.pendingClaims().map(effectiveTicket),
     cases(target) {
       return target ? db.prepare('SELECT * FROM moderation_cases WHERE target=? ORDER BY id DESC LIMIT 25').all(target)
         : db.prepare('SELECT * FROM moderation_cases ORDER BY id DESC LIMIT 75').all();

@@ -127,8 +127,14 @@ function createApp({ store, discord, publicOrigin = '' }) {
           const viewer=await staff();
           const rights=viewer.rights || {};
           const db=store.community;
-          return json({rights,points:viewer.points,requests:rights.review?db.requests():[],tickets:rights.tickets?db.tickets().filter(row=>row.kind==='complaint'?rights.complaintTickets:row.kind==='technical'?rights.technicalTickets:rights.legacyTickets):[],cases:rights.cases?db.cases():[],
-            settings:rights.config?db.settings():null,channels:rights.config?await discord.destinations():[]});
+          let channels=[];
+          if (rights.config) {
+            const destinations=await discord.destinations();
+            const hidden=new Set(db.privateTicketChannels());
+            channels=destinations.filter(channel=>!hidden.has(channel.id));
+          }
+          return json({rights,points:viewer.points,requests:rights.review?db.requests():[],tickets:rights.tickets?db.tickets().filter(row=>require('./ticket-ui').ticketVisible(row,rights)):[],cases:rights.cases?db.cases():[],
+            settings:rights.config?db.settings():null,channels});
         }
         if (route === '/api/catalog') return json({...await discord.directory(),ticketThresholds:require('./ticket-points').thresholds});
         if (route === '/api/simulate') return json(preview(url.searchParams.get('from'), url.searchParams.get('variant') === 'girls'));

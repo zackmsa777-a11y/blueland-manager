@@ -2,6 +2,7 @@
 
 const {ChannelType,PermissionFlagsBits:P,Routes,OverwriteType} = require('discord.js');
 const {catalog,RuleError} = require('./ladder');
+const ui=require('./ticket-ui');
 
 const writing = P.SendMessages | P.SendMessagesInThreads | P.CreatePublicThreads | P.CreatePrivateThreads;
 const ticketRead = P.ViewChannel | P.ReadMessageHistory;
@@ -89,12 +90,11 @@ function communityGateway(readyGuild,context) {
   }
   async function ticketRoom(row,settings) {
     try {
-      const ui=require('./ticket-ui');
       const {escapeMarkdown}=require('discord.js');
       const guild=readyGuild();
       const marker=ui.marker(row);
       const typed=Object.hasOwn(ui.kinds,row.kind);
-      const supportRole=row.kind==='complaint'?'':row.kind==='technical'?ui.SUPPORT:settings.supportRole;
+      const supportRole=ui.departmentRole(row.kind,settings);
       const channels=await guild.channels.fetch();
       let room=channels.find(c=>c?.topic?.split('\n')[0]===marker && c.type===ChannelType.GuildText);
 
@@ -110,6 +110,7 @@ function communityGateway(readyGuild,context) {
           topic:marker+'\n'+(typed?ui.kinds[row.kind]:row.subject),permissionOverwrites:overwrites,reason:'BlueLand support ticket '+row.id});
       }
       room=await getChannel(room.id);
+      verifyStaffComplaint(room,row);
       const overwrites=room.permissionOverwrites.cache;
       const privacy=room.topic?.split('\n')[0]===marker && overwrites.get(guild.id)?.deny.has(P.ViewChannel) && overwrites.get(row.owner)?.allow.has(P.ViewChannel);
       const foreign=typed && [...overwrites.values()].some(o=>o.id!==guild.id && o.id!==row.owner && o.id!==guild.client.user.id && o.id!==supportRole && o.allow.has(P.ViewChannel));
@@ -125,10 +126,12 @@ function communityGateway(readyGuild,context) {
           ? m.components.some(r=>r.components.some(b=>b.customId==='blticket:claim:'+row.id))
           : m.content===legacyWelcome));
         if (!already) {
-          const team=supportRole?`<@&${supportRole}>`:`<@${guild.ownerId}>`;
+          const restricted=row.kind==='staff-complaint';
+          const team=restricted?'':supportRole?` & <@&${supportRole}>`:` & <@${guild.ownerId}>`;
           const intro=await room.send(typed ? {
-            content:`<@${row.owner}> & ${team}\n**🎫 ${ui.kinds[row.kind]} · #${row.id}**\nحياك الله! ${advice}\n\n**الموضوع:** ${escapeMarkdown(row.subject)}\n**التفاصيل:** ${escapeMarkdown(row.details)}`,
-            allowedMentions:{parse:[],users:[...new Set([row.owner,...(supportRole?[]:[guild.ownerId])])],roles:supportRole?[supportRole]:[]},components:ui.controls(row.id)
+            content:`<@${row.owner}>${team}\n**🎫 ${ui.kinds[row.kind]} · #${row.id}**\nحياك الله! ${advice}\n\n**الموضوع:** ${escapeMarkdown(row.subject)}\n**التفاصيل:** ${escapeMarkdown(row.details)}`,
+            allowedMentions:{parse:[],users:[...new Set([row.owner,...(!restricted && !supportRole?[guild.ownerId]:[])])],
+              roles:!restricted && supportRole?[supportRole]:[]},components:ui.controls(row.id)
           } : {content:legacyWelcome,allowedMentions:{parse:[],users:[row.owner],roles:[]},components:ui.controls(row.id)});
           await room.messages.fetch({message:intro.id,force:true,cache:false});
         }
@@ -138,12 +141,46 @@ function communityGateway(readyGuild,context) {
       return room.id;
     } catch(err) { discordFailure(err); }
   }
+  function verifyStaffComplaint(room,row) {
+    if (row.kind!=='staff-complaint') return;
+    const guild=room.guild, overwrites=room.permissionOverwrites.cache;
+    const allowed=new Map([[row.owner,OverwriteType.Member],[guild.client.user.id,OverwriteType.Member],[ui.MANAGERS,OverwriteType.Role]]);
+    const everyone=overwrites.get(guild.id);
+    if (everyone?.type!==OverwriteType.Role || !everyone.deny.has(P.ViewChannel) ||
+        [...allowed].some(([id,type])=>overwrites.get(id)?.type!==type || !overwrites.get(id).allow.has(ticketRead) || overwrites.get(id).deny.has(P.ViewChannel)) ||
+        [...overwrites.values()].some(o=>allowed.get(o.id)!==o.type && o.allow.has(P.ViewChannel))) {
+      throw new RuleError('أذونات الشكوى غير خاصة. راجع القناة قبل استكمالها.',409);
+    }
+  }
   async function verifiedTicket(row) {
     const c=await getChannel(row.channel);
-    if (c.type!==ChannelType.GuildText || c.topic?.split('\n')[0]!==require('./ticket-ui').marker(row)) {
+    if (c.type!==ChannelType.GuildText || c.topic?.split('\n')[0]!==ui.marker(row)) {
       throw new RuleError('هوية قناة التذكرة لا تطابق السجل.',409);
     }
+    verifyStaffComplaint(c,row);
     return c;
+  }
+  async function announceClaim(row,actor,nonce,firstAttempt=null,beforeSend=()=>{}) {
+    if (row.assignee!==actor || !/^\d{17,20}$/u.test(actor) || !/^\d{17,20}$/u.test(nonce)) throw new RuleError('لم يتم التحقق من المستلم.',409);
+    const room=await verifiedTicket(row);
+    const content=`تم استلام هذه التذكرة من قبل الإداري <@${actor}>`;
+    const components=ui.release(row.id,nonce);
+    const marker=components[0].components[0].custom_id;
+    const matches=message=>message?.author?.id===room.guild.client.user.id && message.content===content &&
+      message.components?.some(r=>r.components.some(c=>c.customId===marker));
+    const elapsed=Date.now()-firstAttempt;
+    // Discord deduplicates only recent nonces. After a conservative window, confirm by marker or stop.
+    if (firstAttempt!==null && (elapsed<0 || elapsed>=60_000)) {
+      const recent=await room.messages.fetch({limit:100,cache:false});
+      if (recent.some(matches)) return;
+      throw new RuleError('تعذّر التحقق من رسالة الاستلام.',503);
+    }
+    beforeSend();
+    const posted=await room.send({content,allowedMentions:{parse:[],users:[actor],roles:[]},components,nonce,enforceNonce:true});
+    const checked=await room.messages.fetch({message:posted.id,force:true,cache:false});
+    if (!matches(checked)) {
+      throw new RuleError('تعذّر التحقق من رسالة الاستلام.',503);
+    }
   }
   async function syncClaim(row,change,db) {
     if (row.kind==='complaint') return;
@@ -164,7 +201,7 @@ function communityGateway(readyGuild,context) {
             const guest=await room.guild.members.fetch({user:id,force:true}).catch(err=>{
               if (err.code!==10007) throw err;
             });
-            const support=row.kind==='technical'?require('./ticket-ui').SUPPORT:db.settings().supportRole;
+            const support=ui.departmentRole(row.kind,db.settings());
             if (!guest?.roles.cache.has(support)) continue;
           }
           const old=existing.get(id);
@@ -225,7 +262,7 @@ function communityGateway(readyGuild,context) {
           .map(o=>({id:o.id,type:o.type,allow:o.allow.bitfield,deny:o.deny.bitfield}));
         await c.permissionOverwrites.set([...preserved,...changes],'BlueLand ticket '+row.id);
       }
-      if (row.kind==='technical' || row.kind==='complaint' || guests.length) {
+      if (row.kind!=='legacy' || guests.length) {
         const live=await verifiedTicket(row);
         for (const change of changes) {
           const check=live.permissionOverwrites.cache.get(change.id);
@@ -245,6 +282,7 @@ function communityGateway(readyGuild,context) {
         await room.delete(reason);
         if (await ticketPresent(row.channel)) throw new RuleError('تعذّر التحقق من حذف التذكرة.',503);
       } else if (action==='add' || action==='remove') {
+        if (row.kind==='staff-complaint' && action==='add') throw new RuleError('لا يمكن إضافة ضيوف إلى تذكرة شكوى على إداري.',403);
         if (target===row.owner || target===room.guild.client.user.id) throw new RuleError('لا يمكن تغيير وصول صاحب التذكرة أو البوت.');
         const old=room.permissionOverwrites.cache.get(target);
         if (action==='add') {
@@ -267,12 +305,13 @@ function communityGateway(readyGuild,context) {
   }
   async function destinations() {
     const list=await readyGuild().channels.fetch();
-    return [...list.values()].filter(c=>c && (roomTypes.includes(c.type) || c.type===ChannelType.GuildCategory))
+    return [...list.values()].filter(c=>c && (roomTypes.includes(c.type) || c.type===ChannelType.GuildCategory) &&
+      !(/^BlueLand ticket \d+ • \d{17,20}\n/u.test(c.topic || '') && c.topic.split('\n')[1]===ui.kinds['staff-complaint']))
       .map(c=>({id:c.id,name:c.name,category:c.type===ChannelType.GuildCategory})).sort((a,b)=>a.name.localeCompare(b.name,'ar'));
   }
   async function ticketPresent(id) {
     try { await getChannel(id); return true; } catch(err) { if (err instanceof RuleError && err.status===404) return false; throw err; }
   }
-  return {context,memberAction,roomPermission,ticketRoom,ticketWriting,ticketPresent,syncClaim,editTicketRoom,validateSettings,destinations};
+  return {context,memberAction,roomPermission,ticketRoom,ticketWriting,ticketPresent,syncClaim,announceClaim,editTicketRoom,validateSettings,destinations};
 }
 module.exports={communityGateway};

@@ -21,8 +21,15 @@ function createDiscordTickets({db,community,readyGuild,now}) {
       const get=message=>channel.messages.fetch({message,force:true,cache:false}).catch(err=>{if(err.code===10008)return null;throw err;});
       const payload=ui.panel();
       const [expected]=payload.embeds;
-      const matches=m=>belongs(m) && m.content==='' && m.embeds?.length===1 &&
-        m.embeds[0].title===expected.title && m.embeds[0].description===expected.description && m.embeds[0].color===expected.color;
+      const [select]=payload.components[0].components;
+      const matches=m=>{
+        if (!belongs(m) || m.content!=='' || m.embeds?.length!==1 || m.components.length!==1 || m.components[0].components.length!==1) return false;
+        const [live]=m.components[0].components;
+        return m.embeds[0].title===expected.title && m.embeds[0].description===expected.description && m.embeds[0].color===expected.color &&
+          live.type===select.type && !live.disabled && (live.minValues ?? live.min_values ?? 1)===1 &&
+          (live.maxValues ?? live.max_values ?? 1)===1 && live.placeholder===select.placeholder && live.options?.length===select.options.length &&
+          select.options.every(({value,label},index)=>live.options[index].value===value && live.options[index].label===label);
+      };
       const id=db.panelMessage();
       const saved=id?await get(id):null;
       const existing=belongs(saved)?saved:(await channel.messages.fetch({limit:50,cache:false})).find(belongs);
@@ -83,29 +90,31 @@ function createDiscordTickets({db,community,readyGuild,now}) {
     return true;
   }
   async function interaction(i) {
-    if (i.guildId!==catalog.guildId || !(i.isButton() || i.isModalSubmit()) || !i.customId?.startsWith('blticket:')) return false;
+    if (i.guildId!==catalog.guildId || !i.customId?.startsWith('blticket:')) return false;
+    const select=i.isStringSelectMenu?.();
+    if (!(i.isButton() || i.isModalSubmit() || select)) return false;
     const [,action,param,requestedBy,until]=i.customId.split(':');
     const say=content=>i.reply({...privateReply,content});
     const panelType=action==='choose' || action==='open' || action==='form';
     try {
-      if (i.user.bot || (i.isButton() && i.message?.author?.id!==i.client.user.id) || (panelType && i.channelId!==ui.PANEL)) {
+      if (i.user.bot || i.message?.author?.id!==i.client.user.id || (panelType && i.channelId!==ui.PANEL)) {
         throw new RuleError('استخدم لوحة التذاكر المعتمدة في السيرفر.',403);
       }
-      if (action==='choose' && i.isButton()) {
-        if (i.message.id!==db.panelMessage()) throw new RuleError('استخدم لوحة التذاكر الأحدث.',403);
-        await i.reply({...privateReply,content:'اختر نوع التذكرة:',components:ui.choices()});
-      } else if (action==='open' && i.isButton() && Object.hasOwn(ui.kinds,param)) {
+      if (i.customId===ui.SELECT && select) {
+        const kind=i.values?.[0];
+        if (i.message.id!==db.panelMessage() || i.values?.length!==1 || !ui.sections.includes(kind)) throw new RuleError('استخدم لوحة التذاكر الأحدث.',403);
         const input=(id,label,max,style)=>new ActionRowBuilder().addComponents(new TextInputBuilder()
           .setCustomId(id).setLabel(label).setStyle(style).setMaxLength(max).setRequired(true));
-        const modal=new ModalBuilder().setCustomId('blticket:form:'+param).setTitle(ui.kinds[param])
+        const modal=new ModalBuilder().setCustomId('blticket:form:'+kind).setTitle(ui.kinds[kind])
           .addComponents(input('subject','الموضوع',120,TextInputStyle.Short),input('details','التفاصيل',750,TextInputStyle.Paragraph));
         await i.showModal(modal);
-      } else if (action==='form' && i.isModalSubmit() && Object.hasOwn(ui.kinds,param)) {
+      } else if (action==='form' && i.isModalSubmit() && ui.sections.includes(param)) {
+        if (i.message.id!==db.panelMessage()) throw new RuleError('استخدم لوحة التذاكر الأحدث.',403);
         await i.deferReply(privateReply);
         const ticket=await community.openTicket(i.user.id,'ticket-form:'+i.id,i.fields.getTextInputValue('subject'),param,i.fields.getTextInputValue('details'));
         if (!ticket.channel) throw new RuleError('التذكرة ما زالت قيد التجهيز.',409);
         await i.editReply({content:ticket.kind===param?`تذكرتك: <#${ticket.channel}>`:`عندك تذكرة مفتوحة بالفعل: <#${ticket.channel}>. ما فتحنا تذكرة جديدة.`,allowedMentions:noMentions});
-      } else if (i.isButton() && ['claim','close','delete'].includes(action)) {
+      } else if (i.isButton() && ['claim','unclaim','close','delete'].includes(action)) {
         const ticket=ticketFor(i.channelId,param);
         if (action==='delete' && (requestedBy!==i.user.id || !/^\d{13}$/u.test(until) || Date.now()>Number(until))) {
           throw new RuleError('انتهت مهلة الحذف أو الزر ليس لك. استخدم `+delete` من جديد.',403);
@@ -116,8 +125,10 @@ function createDiscordTickets({db,community,readyGuild,now}) {
           // The originating channel no longer exists. Discord may reject edits to its interaction response.
           await i.editReply({content:'حُذفت التذكرة.',allowedMentions:noMentions}).catch(()=>{});
         } else {
-          await community.ticketAction(i.user.id,ticket.id,action);
-          await i.editReply({content:action==='close'?'🔒 أُغلقت التذكرة بدون حذفها.':'تم استلام التذكرة.',allowedMentions:noMentions});
+          const updated=await community.ticketAction(i.user.id,ticket.id,action,{noticeId:action==='claim'?i.id:undefined});
+          const content=action==='close'?'🔒 أُغلقت التذكرة بدون حذفها.':action==='unclaim'?'تم سحب الاستلام. التذكرة متاحة للطاقم المخوّل.':
+            updated.noticeFailed?'تم استلام التذكرة، لكن تعذّر تأكيد إرسال إشعار الاستلام.':'تم استلام التذكرة.';
+          await i.editReply({content,allowedMentions:noMentions,...(action==='claim'?{components:ui.release(ticket.id)}:{})});
         }
       } else throw new RuleError('إجراء التذكرة غير صالح.');
     } catch(err) {
