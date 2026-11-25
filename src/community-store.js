@@ -29,6 +29,7 @@ function openCommunityStore(db) {
   db.exec('CREATE TABLE IF NOT EXISTS support_ticket_guests (ticket INTEGER NOT NULL, member TEXT NOT NULL, PRIMARY KEY(ticket,member)); CREATE TABLE IF NOT EXISTS support_ticket_panel (id INTEGER PRIMARY KEY CHECK(id=1), message TEXT NOT NULL)');
   const activity=createActivityStore(db);
   const dailyTop=openDailyTopReceipts(db);
+  const ticketPoints=require('./ticket-points').openTicketPoints(db);
 
   const request = id => db.prepare('SELECT * FROM staff_requests WHERE id=?').get(id);
   const ticket = id => db.prepare('SELECT * FROM support_tickets WHERE id=?').get(id);
@@ -96,11 +97,7 @@ function openCommunityStore(db) {
     ticketState(id,previous,next) {
       return db.prepare('UPDATE support_tickets SET state=? WHERE id=? AND state=?').run(next,id,previous).changes;
     },
-    claim(id,actor,remove) {
-      const sql=remove ? "UPDATE support_tickets SET assignee=NULL WHERE id=? AND assignee=? AND state='open'"
-        : "UPDATE support_tickets SET assignee=? WHERE id=? AND (assignee IS NULL OR assignee=?) AND state='open'";
-      return Boolean(remove ? db.prepare(sql).run(id,actor).changes : db.prepare(sql).run(actor,id,actor).changes);
-    },
+    ...ticketPoints,
     cases(target) {
       return target ? db.prepare('SELECT * FROM moderation_cases WHERE target=? ORDER BY id DESC LIMIT 25').all(target)
         : db.prepare('SELECT * FROM moderation_cases ORDER BY id DESC LIMIT 75').all();

@@ -29,6 +29,13 @@ function createMessageHandler({ authorize, service, store, publicOrigin, run, pa
       // A fixed greeting in a ticket or its thread does not reach the assistant or earn XP.
       if (greeting && [message.channelId,message.channel?.parentId].some(id=>id && store.community?.ticketByChannel?.(id)))
         return await replySalam();
+      if (run && parse && /^\+\s*(?:نقاطي|نقاط|points)(?:\s|$)/u.test(text)) {
+        const answer=await run({...parse(text),actor:message.author.id});
+        try { await message.author.send({content:answer,allowedMentions:{parse:[]}}); }
+        catch { throw new RuleError('استخدم /نقاطي لعرض رصيدك برد خاص، أو افتح الرسائل الخاصة.'); }
+        await reply('أرسلت لك نقاط التذاكر في الخاص.');
+        return;
+      }
       if (ticketMessages && await ticketMessages(message,text)) return;
       if (run && parse && /^\+?(?:توب|top)(?:\s|$)/iu.test(text)) {
         const top=parse(text);

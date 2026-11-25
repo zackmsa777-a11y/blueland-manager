@@ -122,9 +122,11 @@ function chooseGroup(key) {
 function renderGradePane() {
   const g = groupOf(state.group);
   const older = permissions(g).filter(id => !g.helpers.includes(id));
+  const cost=state.catalog.ticketThresholds?.[g.id];
   $('#grade-pane').innerHTML = `<div class="pane-head"><div class="group-name">${swatch(state.roles.get(g.base))}<h3 dir="ltr">${escapeHtml(g.name)}</h3></div>
     <label class="search">${icon('search')}<span class="sr-only">بحث في الفئة</span><input id="grade-search" type="search" placeholder="بحث في الفئة" value="${escapeHtml(state.filter)}"></label></div>
     <div class="permission-band">${icon('key-round')}<span class="chip-label">صلاحيات الفئة</span>${chips(g.helpers)}${chips(older,true)}${older.length ? '<span>تشمل الصلاحيات الموروثة</span>' : ''}</div>
+    <p class="ticket-policy">${cost?'ترقية تلقائية درجة واحدة كل '+number(cost)+' نقطة من استلام التذاكر.':'هذه الفئة لا تجمع نقاط التذاكر.'}</p>
     <div class="table-wrap" tabindex="0" role="region" aria-label="درجات ${escapeHtml(g.name)}"><table class="grade-table"><caption class="sr-only">درجات ${escapeHtml(g.name)} من الأدنى إلى الأعلى</caption>
     <thead><tr><th scope="col">الدرجة</th><th scope="col">الرول</th><th scope="col">الترقية التالية</th><th scope="col"><span class="sr-only">التفاصيل</span></th></tr></thead><tbody id="grade-rows"></tbody></table></div>`;
   renderGradeRows();

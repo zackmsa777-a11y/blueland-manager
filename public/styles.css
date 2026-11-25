@@ -300,6 +300,12 @@ code { font-family:ui-monospace,Consolas,var(--body); font-size:.88em; color:#d6
 #desk-settings { max-width:640px; }#desk-settings fieldset { border:0; border-top:1px solid var(--line); margin:10px 0 20px; padding:12px 0 0; }
 #desk-settings legend { padding-inline-end:10px; font-weight:600; }#desk-settings .field { margin-bottom:12px; }
 #review-note { width:100%; resize:vertical; color:var(--ink); background:var(--page); border:1px solid var(--line); border-radius:8px; padding:10px; font:inherit; }
+.staff-points { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px 36px; padding:16px 20px; }
+.staff-points h2 { margin:0; font-size:1.1rem; }
+.staff-points p { margin:3px 0; color:var(--muted); }
+.ticket-progress { display:flex; align-items:center; gap:12px; font-variant-numeric:tabular-nums; }
+.ticket-progress progress { accent-color:var(--accent); flex:1; min-width:0; }
+.ticket-policy { color:var(--muted); padding-inline:16px; }
 @media(max-width:840px){.top-nav { gap:12px; }.top-inner { column-gap:14px; }}
 @media(max-width:620px){.top-nav { gap:0 12px; }.desk-body { padding:12px; }.desk-tabs { gap:8px; padding-inline:12px; }.desk-record { grid-template-columns:1fr;gap:7px; }.command-row { grid-template-columns:78px minmax(0,1fr);gap:8px; }}
 @media(max-width:420px){

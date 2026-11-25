@@ -56,6 +56,29 @@ test('complaint has no support role overwrite and never pings the support role',
   assert.match(f.posts[0].content,/حياك الله/u);
 });
 
+test('claim blocks the other support writers, preserves privacy and restores just the affected write permissions',async()=>{
+  const f=fixture(),row={id:1,owner:opener,kind:'technical',subject:'موضوع',details:'وصف'};
+  row.channel=await f.gateway.ticketRoom(row,{});
+  const change={member:guest,restoring:0};
+  const db={ticketGuests:()=>[],saveClaimOverwrites:(_,plan)=>{change.overwrites=JSON.stringify(plan);}};
+  const perms=f.getRoom().permissionOverwrites.cache;
+  await f.gateway.syncClaim(row,change,db);
+  assert.ok(perms.get(SUPPORT).allow.has(P.ViewChannel));
+  assert.ok(perms.get(SUPPORT).deny.has(P.SendMessages | P.SendMessagesInThreads));
+  assert.ok(perms.get(guildId).deny.has(P.ViewChannel | P.SendMessages));
+  assert.ok(perms.get(guest).allow.has(P.SendMessages));
+  assert.ok(!perms.get(guest).allow.has(P.ViewChannel));
+  assert.ok(perms.get(opener).allow.has(P.SendMessages));
+  assert.ok(perms.get(bot).allow.has(P.SendMessages));
+  await f.gateway.syncClaim(row,change,db);
+  change.restoring=1;
+  await f.gateway.syncClaim(row,change,db);
+  assert.ok(perms.get(SUPPORT).allow.has(P.ViewChannel | P.SendMessages));
+  assert.ok(perms.get(guildId).deny.has(P.ViewChannel));
+  assert.ok(!perms.get(guildId).deny.has(P.SendMessages));
+  assert.ok(!perms.has(guest));
+});
+
 test('slash-created tickets welcome the opener once without adding a staff ping',async()=>{
   const f=fixture();
   const ticket={id:1,owner:opener,kind:'legacy',subject:'موضوع'};

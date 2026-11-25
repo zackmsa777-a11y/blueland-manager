@@ -16,10 +16,11 @@ const {ladderIssue}=require('../src/directory');
 
 const owner='200000000000000001', member='200000000000000002', helper='200000000000000003', outsider='200000000000000004', channel='200000000000000005';
 const [staff,mod]=catalog.categories;
+const botRoleId='1573988437088932015';
 function fixture(t) {
   const store=openStore(':memory:'); t.after(()=>store.close());
   const members=new Map([[owner,[]],[member,[]],[helper,[staff.base, ...staff.helpers]],[outsider,[]]]);
-  const botRole=catalog.roles.find(r=>r.name==='BlueLand Manager' && r.managed);
+  const botRole=roles.get(botRoleId);
   const person=id=>({id,name:'اسم '+id.slice(-2),bot:false,roles:members.get(id) || []});
   const calls=[];
   const g={
@@ -27,6 +28,7 @@ function fixture(t) {
     async change(e,id,add) {const set=new Set(members.get(e.target));if(add)set.add(id);else set.delete(id);members.set(e.target,[...set]);},
     async roomPermission(x) {calls.push(x.action);},async memberAction(x) {calls.push([x.action,x.target,x.expiry]);},
     async ticketRoom() {calls.push('create');return channel;},async ticketWriting(row,write) {calls.push(write?'writable':'readonly');},
+    async syncClaim() {calls.push('claim permissions');},
     async validateSettings() {},async destinations() {return [];}
   };
   const service=makeService(store,g);
@@ -36,7 +38,7 @@ function fixture(t) {
 }
 test('matched recreated roles require unique names, original grants and all relative hierarchy positions',()=>{
   const saved=catalog;
-  const raw=saved.roles.map(r=>({...r,color:r.color?parseInt(r.color.slice(1),16):0,tags:r.name==='BlueLand Manager'?{bot_id:saved.botId}:{}}));
+  const raw=saved.roles.map(r=>({...r,color:r.color?parseInt(r.color.slice(1),16):0,tags:r.id===botRoleId?{bot_id:saved.botId}:{}}));
   const x=raw.find(r=>r.id===staff.base);
   x.id='290000000000000001';
   const good=planRebind(saved,raw);
@@ -182,7 +184,7 @@ test('private tickets only let staff claim, honor one open ticket and preserve t
   assert.equal((await h.community.ticketAction(member,row.id,'close')).state,'closed');
   await assert.rejects(h.community.ticketAction(member,row.id,'reopen'),{status:403});
   assert.equal((await h.community.ticketAction(helper,row.id,'reopen')).state,'open');
-  assert.deepEqual(h.calls,['create','readonly','writable']);
+  assert.deepEqual(h.calls,['create','claim permissions','readonly','writable','claim permissions']);
 });
 test('ticket creation sends private member, bot and support overwrites in the channel creation request',async t=>{
   const h=fixture(t);const created=[];const s=h.store.community.settings();

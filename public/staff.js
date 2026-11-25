@@ -22,6 +22,7 @@ async function renderStaff() {
     if (!tabs.includes(deskTab)) deskTab=tabs[0];
     const counters={requests:desk?.requests.filter(r=>r.state==='pending').length,tickets:desk?.tickets.filter(r=>r.state==='open').length};
     content.innerHTML=(!desk?'<div class="desk-signin"><p>سجّل دخولك لمراجعة طلبات الأعضاء وتذاكرهم.</p><button id="desk-login" class="button quiet">دخول الإدارة</button></div>':'')+
+      (desk?.points?staffPoints(desk.points):'')+
       '<div class="desk-panel"><nav class="desk-tabs" aria-label="أقسام مكتب الطاقم">'+tabs.map(k=>'<button type="button" data-desk="'+k+'" aria-pressed="'+(k===deskTab)+'">'+deskLabels[k]+(counters[k]?' <span class="count">'+number(counters[k])+'</span>':'')+'</button>').join('')+
       '</nav><div class="desk-body" id="desk-body"></div></div>';
     if ($('#desk-login')) $('#desk-login').onclick=login;
@@ -36,6 +37,16 @@ async function renderStaff() {
     for (const b of content.querySelectorAll('[data-desk]')) b.onclick=()=>select(b.dataset.desk);
     select(deskTab);
   } catch(err) { if (load===deskLoad && state.view==='staff') failInline(content,err); }
+}
+function staffPoints(points) {
+  const rank=points.grade?' · '+escapeHtml(points.grade):'';
+  const detail=points.threshold
+    ? '<label for="ticket-progress">'+(points.remaining?'باقي '+number(points.remaining)+' نقطة للترقية إلى ':'اكتمل رصيد الترقية إلى ')+escapeHtml(points.next)+'</label>'+
+      '<div class="ticket-progress"><progress id="ticket-progress" max="'+points.threshold+'" value="'+Math.min(points.threshold,points.available)+'"></progress>'+
+      '<bdi>'+number(points.available)+' / '+number(points.threshold)+'</bdi></div>'
+    : '<p>رتبتك الحالية خارج نظام نقاط الترقيات.</p>';
+  return '<section class="staff-points desk-panel" aria-labelledby="points-heading"><div><h2 id="points-heading">نقاط تذاكري</h2>'+
+    '<p>إجمالي النقاط '+number(points.total)+rank+'</p></div><div>'+detail+'</div></section>';
 }
 function deskCommands(panel,commands) {
   panel.innerHTML='<div class="desk-head"><h2>أوامر BlueLand</h2><label class="search" for="command-search">'+icon('search')+
@@ -71,9 +82,12 @@ function deskRecords(panel,tab,items) {
     if (tab==='requests' && row.state==='pending') button('مراجعة',()=>reviewRequest(row));
     if (tab==='tickets' && row.channel) {
       const a=document.createElement('a');a.className='button quiet';a.textContent='فتح الروم';a.href='https://discord.com/channels/'+state.catalog.guildId+'/'+row.channel;a.target='_blank';a.rel='noopener noreferrer';actions.append(a);
-      if (row.state==='open' && !row.assignee) button('استلام',()=>ticketDecision(row,'claim','استلام التذكرة'));
-      if (row.state==='open' && row.assignee===state.status.viewer.id) button('ترك الاستلام',()=>ticketDecision(row,'unclaim','إعادة التذكرة للطاقم'));
-      if (['open','closed'].includes(row.state)) button(row.state==='open'?'إغلاق':'إعادة فتح',()=>row.state==='open'?ticketDecision(row,'close','إغلاق التذكرة'):ticketDecision(row,'reopen','إعادة فتح التذكرة'));
+      const viewer=state.status.viewer;
+      if (row.state==='open' && !row.assignee && row.owner!==viewer.id && (row.kind!=='legacy' || viewer.rights.legacyClaim))
+        button('استلام',()=>ticketDecision(row,'claim','استلام التذكرة'));
+      if (row.state==='open' && row.assignee===viewer.id) button('ترك الاستلام',()=>ticketDecision(row,'unclaim','إعادة التذكرة للطاقم'));
+      const canManage=!row.assignee || row.assignee===viewer.id || viewer.rights.ticketAdmin || (row.owner===viewer.id && row.state==='open');
+      if (canManage && ['open','closed'].includes(row.state)) button(row.state==='open'?'إغلاق':'إعادة فتح',()=>row.state==='open'?ticketDecision(row,'close','إغلاق التذكرة'):ticketDecision(row,'reopen','إعادة فتح التذكرة'));
     }
   }
 }

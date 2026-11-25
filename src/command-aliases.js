@@ -5,7 +5,7 @@ const arabicNames = Object.freeze({
   ping: 'بنق', help: 'أوامر', server: 'سيرفر', roles: 'ر', promote: 'ترقية', dashboard: 'لوحة',
   warn: 'تحذير', unwarn: 'سحب-تحذير', warnings: 'تحذيرات', timeout: 'تايم', untimeout: 'فك-تايم',
   mute: 'ميوت', unmute: 'فك-ميوت', lock: 'قفل', unlock: 'فتح', kick: 'طرد', ban: 'بان', unban: 'فك-بان',
-  request: 'طلب', ticket: 'تذكرة', rank: 'مستوى', top: 'توب', game: 'ألعاب'
+  request: 'طلب', ticket: 'تذكرة', rank: 'مستوى', points:'نقاطي', top: 'توب', game: 'ألعاب'
 });
 const arabicSubs = Object.freeze({
   request: Object.freeze({submit: 'تقديم', status: 'حالة', cancel: 'سحب', pending: 'معلقة', approve: 'قبول', reject: 'رفض'}),

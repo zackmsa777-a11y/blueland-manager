@@ -37,6 +37,7 @@ function setup(t) {
     async context(id) {return {actor:person(id,id===helper?[SUPPORT]:id===admin?[catalog.roles.find(r=>(BigInt(r.permissions || 0)&8n)!==0n).id]:[]),ownerId:owner,roles};},
     async ticketRoom(ticket) {calls.push(['open',ticket.kind,ticket.subject,ticket.details]);return room;},
     async ticketWriting(ticket,enable,guests) {calls.push(['write',ticket.channel,enable,guests]);},
+    async syncClaim(ticket) {calls.push(['claim',ticket.channel]);},
     async editTicketRoom(ticket,action,target) {calls.push([action,ticket.channel,target]);}
   };
   const community=createCommunity(store,gateway,{checkOperator(){throw new RuleError('not an operator',403);}});

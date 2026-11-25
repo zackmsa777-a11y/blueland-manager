@@ -19,11 +19,12 @@ const {createDiscordGames}=require('../src/discord-games');
 const actor='123456789012345678', other='123456789012345679', owner='123456789012345680', channel='123456789012345681', mod='123456789012345682';
 const target=`<@${other}>`;
 
-test('registered guide lists 40 commands and SQLite shortcuts are global, unique and persistent',()=>{
+test('registered guide includes staff points and SQLite shortcuts are global, unique and persistent',()=>{
   const folder=mkdtempSync(join(tmpdir(),'blueland-alias-test-'));
   try{
     const file=join(folder,'alias.db');let store=openStore(file);
-    assert.equal(commandGuide(store.shortcuts).length,40);
+    assert.equal(commandGuide(store.shortcuts).length,41);
+    assert.ok(commandGuide(store.shortcuts).some(c=>c.name==='/points'));
     assert.equal(commandGuide(store.shortcuts).find(c=>c.name==='/promote').example,'+ترقية @العضو 2');
     assert.equal(commandGuide(store.shortcuts).find(c=>c.name==='+تخفيض').example,'+تخفيض @العضو 3');
     assert.deepEqual(store.shortcuts.add('مرسيدس','/ban',actor),{phrase:'مرسيدس',command:'/ban'});

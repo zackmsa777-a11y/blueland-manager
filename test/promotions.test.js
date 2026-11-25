@@ -167,7 +167,7 @@ test('Discord message delivery, replay and private dashboard pairing use the rea
   await handle(message);
   await handle(message);
   assert.equal(h.store.history().length,1);
-  assert.match(replies[0].content,/Magistr.*BlueLand Mod/);
+  assert.ok(replies[0].content.includes('**'+roles.get(magistr).label+'** إلى **'+roles.get(mod.base).label+'**'));
   assert.deepEqual(replies[0].allowedMentions,{parse:[],repliedUser:false});
   await handle({...message,content:'+ترقية'});
   assert.match(replies.at(-1).content,/منشن عضو واحد/);

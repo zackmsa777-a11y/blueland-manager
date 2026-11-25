@@ -129,7 +129,7 @@ function communityGateway(readyGuild,context) {
           const intro=await room.send(typed ? {
             content:`<@${row.owner}> & ${team}\n**🎫 ${ui.kinds[row.kind]} · #${row.id}**\nحياك الله! ${advice}\n\n**الموضوع:** ${escapeMarkdown(row.subject)}\n**التفاصيل:** ${escapeMarkdown(row.details)}`,
             allowedMentions:{parse:[],users:[...new Set([row.owner,...(supportRole?[]:[guild.ownerId])])],roles:supportRole?[supportRole]:[]},components:ui.controls(row.id)
-          } : {content:legacyWelcome,allowedMentions:{parse:[],users:[row.owner],roles:[]},components:[]});
+          } : {content:legacyWelcome,allowedMentions:{parse:[],users:[row.owner],roles:[]},components:ui.controls(row.id)});
           await room.messages.fetch({message:intro.id,force:true,cache:false});
         }
       } catch(err) {
@@ -144,6 +144,66 @@ function communityGateway(readyGuild,context) {
       throw new RuleError('هوية قناة التذكرة لا تطابق السجل.',409);
     }
     return c;
+  }
+  async function syncClaim(row,change,db) {
+    if (row.kind==='complaint') return;
+    try {
+      const room=await verifiedTicket(row);
+      const existing=room.permissionOverwrites.cache;
+      let plan=change.overwrites && JSON.parse(change.overwrites);
+      if (change.restoring && !plan) return;
+      if (!plan) {
+        const guests=new Set(db.ticketGuests(row.id));
+        const principals=new Map([...existing.values()].map(o=>[o.id,o.type]));
+        principals.set(change.member,OverwriteType.Member);
+        principals.set(room.guild.id,OverwriteType.Role);
+        plan=[];
+        for (const [id,type] of principals) {
+          if (id===row.owner || id===room.guild.client.user.id) continue;
+          if (guests.has(id) && id!==change.member) {
+            const guest=await room.guild.members.fetch({user:id,force:true}).catch(err=>{
+              if (err.code!==10007) throw err;
+            });
+            const support=row.kind==='technical'?require('./ticket-ui').SUPPORT:db.settings().supportRole;
+            if (!guest?.roles.cache.has(support)) continue;
+          }
+          const old=existing.get(id);
+          const allow=(old?.allow.bitfield || 0n) & writing, deny=(old?.deny.bitfield || 0n) & writing;
+          const claimant=id===change.member;
+          const nextAllow=claimant?allow | P.SendMessages:0n;
+          const nextDeny=claimant?deny & ~P.SendMessages:writing;
+          if (allow!==nextAllow || deny!==nextDeny) {
+            plan.push({id,type,allow:String(allow),deny:String(deny),nextAllow:String(nextAllow),nextDeny:String(nextDeny)});
+          }
+        }
+        db.saveClaimOverwrites(row.id,plan);
+      }
+      const result=new Map([...existing.values()].map(o=>[o.id,{id:o.id,type:o.type,allow:o.allow.bitfield,deny:o.deny.bitfield}]));
+      let changed=false;
+      for (const patch of plan) {
+        const old=result.get(patch.id);
+        const beforeAllow=BigInt(patch.allow),beforeDeny=BigInt(patch.deny);
+        const afterAllow=BigInt(patch.nextAllow),afterDeny=BigInt(patch.nextDeny);
+        const currentAllow=old?.allow || 0n,currentDeny=old?.deny || 0n;
+        // On release, preserve individual bits changed by a moderator since the claim.
+        const mask=change.restoring ? writing & ~((currentAllow ^ afterAllow) | (currentDeny ^ afterDeny)) : writing;
+        const allow=(currentAllow & ~mask) | ((change.restoring?beforeAllow:afterAllow) & mask);
+        const deny=(currentDeny & ~mask) | ((change.restoring?beforeDeny:afterDeny) & mask);
+        if (allow===currentAllow && deny===currentDeny) continue;
+        changed=true;
+        if (!allow && !deny) result.delete(patch.id);
+        else result.set(patch.id,{id:patch.id,type:patch.type,allow,deny});
+      }
+      if (changed) await room.permissionOverwrites.set([...result.values()],'BlueLand ticket '+row.id+' / '+(change.restoring?'unclaim':'claim'));
+      const live=await verifiedTicket(row);
+      for (const patch of plan) {
+        const actual=live.permissionOverwrites.cache.get(patch.id),desired=result.get(patch.id);
+        if ((((actual?.allow.bitfield || 0n) ^ (desired?.allow || 0n)) & writing) ||
+            (((actual?.deny.bitfield || 0n) ^ (desired?.deny || 0n)) & writing)) {
+          throw new RuleError('بانتظار تأكيد أذونات الاستلام من ديسكورد.',503);
+        }
+      }
+    } catch(err) { discordFailure(err); }
   }
   async function ticketWriting(row,write,guests=[]) {
     try {
@@ -213,6 +273,6 @@ function communityGateway(readyGuild,context) {
   async function ticketPresent(id) {
     try { await getChannel(id); return true; } catch(err) { if (err instanceof RuleError && err.status===404) return false; throw err; }
   }
-  return {context,memberAction,roomPermission,ticketRoom,ticketWriting,ticketPresent,editTicketRoom,validateSettings,destinations};
+  return {context,memberAction,roomPermission,ticketRoom,ticketWriting,ticketPresent,syncClaim,editTicketRoom,validateSettings,destinations};
 }
 module.exports={communityGateway};

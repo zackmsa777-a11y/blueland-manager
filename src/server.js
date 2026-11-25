@@ -127,10 +127,10 @@ function createApp({ store, discord, publicOrigin = '' }) {
           const viewer=await staff();
           const rights=viewer.rights || {};
           const db=store.community;
-          return json({rights,requests:rights.review?db.requests():[],tickets:rights.tickets?db.tickets().filter(row=>row.kind==='complaint'?rights.complaintTickets:row.kind==='technical'?rights.technicalTickets:rights.legacyTickets):[],cases:rights.cases?db.cases():[],
+          return json({rights,points:viewer.points,requests:rights.review?db.requests():[],tickets:rights.tickets?db.tickets().filter(row=>row.kind==='complaint'?rights.complaintTickets:row.kind==='technical'?rights.technicalTickets:rights.legacyTickets):[],cases:rights.cases?db.cases():[],
             settings:rights.config?db.settings():null,channels:rights.config?await discord.destinations():[]});
         }
-        if (route === '/api/catalog') return json(await discord.directory());
+        if (route === '/api/catalog') return json({...await discord.directory(),ticketThresholds:require('./ticket-points').thresholds});
         if (route === '/api/simulate') return json(preview(url.searchParams.get('from'), url.searchParams.get('variant') === 'girls'));
         if (route === '/api/history') { if (!home) await staff(); await discord.authorize(actor); return json(store.history()); }
         if (route === '/api/export') {

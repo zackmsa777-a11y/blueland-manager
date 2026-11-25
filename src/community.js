@@ -3,6 +3,7 @@
 const {PermissionFlagsBits: P} = require('discord.js');
 const {catalog,roles,compareRoles,planPromotion,RuleError} = require('./ladder');
 const {memberAccess} = require('./promotions');
+const {staffGrade,progress} = require('./ticket-points');
 
 const helper = Object.fromEntries(catalog.roles.filter(r=>r.kind==='permission').map(r=>[r.label,r.id]));
 const rules = {
@@ -102,13 +103,16 @@ function createCommunity(store, gateway, promotions) {
     let review=true;
     try { promotions.checkOperator(ctx); } catch(err) { if (!(err instanceof RuleError)) throw err; review=false; }
     const config=permits(ctx,ctx.actor,P.ManageGuild);
-    const legacyTickets=permits(ctx,ctx.actor,P.ManageChannels) || ctx.actor.roles.includes(db.settings().supportRole);
+    const legacyClaim=actor===ctx.ownerId || ctx.actor.roles.includes(db.settings().supportRole);
+    const legacyTickets=permits(ctx,ctx.actor,P.ManageChannels) || legacyClaim;
     const complaintTickets=actor===ctx.ownerId;
     const technicalTickets=complaintTickets || ctx.actor.roles.includes(require('./ticket-ui').SUPPORT);
     const tickets=legacyTickets || technicalTickets;
     const cases=config || permits(ctx,ctx.actor,P.ModerateMembers) || ctx.actor.roles.includes(helper['#warn/unwarn']);
-    if (ctx.actor.bot || !(review || tickets || cases || config)) throw new RuleError('دخول الطاقم يحتاج إلى رول مخوّل في BlueLand.',403);
-    return {id:actor,name:ctx.actor.name,rights:{review,config,tickets,cases,legacyTickets,complaintTickets,technicalTickets}};
+    const grade=staffGrade(ctx.actor.roles);
+    if (ctx.actor.bot || !(grade || review || tickets || cases || config)) throw new RuleError('دخول الطاقم يحتاج إلى رول مخوّل في BlueLand.',403);
+    return {id:actor,name:ctx.actor.name,points:progress(db,actor,grade,ctx.ownerId),
+      rights:{review,config,tickets,cases,legacyTickets,legacyClaim,complaintTickets,technicalTickets,ticketAdmin:permits(ctx,ctx.actor,0n)}};
   }
   async function submit({actor,kind,body,delivery}) {
     if (!Object.hasOwn(kinds,kind)) throw new RuleError('اختر نوع طلب صالحًا.');
@@ -165,6 +169,10 @@ function createCommunity(store, gateway, promotions) {
         else if (err instanceof RuleError && err.status===403) db.ticketState(row.id,row.state,closing?'open':'closed');
         throw err;
       }
+      if (!closing && row.assignee) {
+        db.resyncClaim(row.id);
+        await finishClaim(row);
+      }
       db.ticketState(row.id,row.state,closing?'closed':'open');
     }
     return db.ticket(row.id);
@@ -189,17 +197,78 @@ function createCommunity(store, gateway, promotions) {
     }
     return ctx;
   }
+  async function finishClaim(row) {
+    const change=db.claimChange(row.id);
+    if (!change || change.synced) return;
+    try { await gateway.syncClaim(row,change,db); }
+    catch (err) {
+      if (err instanceof RuleError && err.status===404 && !await gateway.ticketPresent(row.channel)) db.ticketRemoved(row.channel);
+      throw err;
+    }
+    db.finishClaim(change);
+  }
+  const awarding=new Set();
+  async function advance(member) {
+    const award=db.advancementFor(member);
+    if (!award || awarding.has(member)) return;
+    awarding.add(member);
+    const id='ticket-points:'+award.id;
+    try {
+      if (!store.byId(id)) {
+        const ctx=await gateway.context(member);
+        const live=staffGrade(ctx.actor.roles);
+        if (ctx.actor.bot || member===ctx.ownerId || live?.id!==award.grade) {
+          db.endAdvancement(award.id,'superseded');
+          if (!ctx.actor.bot && member!==ctx.ownerId) db.queueAdvancement(member,live);
+          return;
+        }
+      }
+      await promotions.execute({id,actor:catalog.botId,target:member,expectedFrom:award.grade,source:'ticket-points'});
+      db.endAdvancement(award.id,'done');
+      if (db.ticketBalance(member).available>=15) {
+        const ctx=await gateway.context(member);
+        if (!ctx.actor.bot && member!==ctx.ownerId) db.queueAdvancement(member,staffGrade(ctx.actor.roles));
+      }
+    } catch (err) {
+      // The persisted award is retried by recover without charging the balance twice.
+      console.warn('Ticket promotion',award.id,err instanceof RuleError?err.message:err.code || err.name);
+    } finally { awarding.delete(member); }
+  }
   async function ticketAction(actor,id,action) {
     const row=db.ticket(rowId(id));
     if (!row) throw new RuleError('التذكرة غير موجودة.',404);
-    if (action!=='close' || actor!==row.owner) await ticketStaff(actor,row);
+    const ctx=action==='close' && actor===row.owner ? null : await ticketStaff(actor,row);
     return exclusive('ticket:'+row.owner,async()=>{
+      const pending=db.claimChange(row.id);
+      if (action==='unclaim' && pending && !pending.synced && pending.member===actor) {
+        if (!pending.restoring) db.undoClaim(row.id);
+        await finishClaim(row);
+        return db.ticket(row.id);
+      }
+      await finishClaim(row);
       const current=db.ticket(row.id);
       if (!current.channel) throw new RuleError('روم هذه التذكرة غير متاح. افتح تذكرة جديدة.',409);
       if (['claim','unclaim'].includes(action)) {
-        if (!db.claim(current.id,actor,action==='unclaim')) throw new RuleError('راجع حالة التذكرة والمسؤول المستلم لها.',409);
+        if (current.state!=='open') throw new RuleError('الاستلام للتذاكر المفتوحة فقط.',409);
+        if (action==='claim') {
+          const supportRole=current.kind==='technical'?require('./ticket-ui').SUPPORT:db.settings().supportRole;
+          if (actor===current.owner || (actor!==ctx.ownerId && !ctx.actor.roles.includes(supportRole)))
+            throw new RuleError('استلام التذكرة لرول الدعم، ولا يمكنك استلام تذكرتك.',403);
+          if (current.assignee && current.assignee!==actor) throw new RuleError('سبق لعضو آخر من الدعم استلام هذه التذكرة.',409);
+          if (!current.assignee) {
+            const grade=actor===ctx.ownerId?null:staffGrade(ctx.actor.roles);
+            db.startClaim(current.id,actor,grade?.id || null);
+          }
+        } else {
+          if (current.assignee!==actor) throw new RuleError('إعادة التذكرة متاحة للمستلم فقط.',403);
+          db.undoClaim(current.id);
+        }
+        await finishClaim(current);
+        if (action==='claim') await advance(actor);
       } else {
         if (!['close','reopen'].includes(action)) throw new RuleError('إجراء التذكرة غير صالح.');
+        if (ctx && current.assignee && current.assignee!==actor && !permits(ctx,ctx.actor,0n))
+          throw new RuleError('إدارة التذكرة بعد استلامها للمستلم أو Administrator.',403);
         const close=action==='close';
         if (!close && db.activeTicket(row.owner)) throw new RuleError('للعضو تذكرة أخرى مفتوحة.',409);
         if (!db.ticketState(row.id,close?'open':'closed',close?'closing':'reopening')) throw new RuleError('حالة التذكرة تغيّرت. حدّث القائمة.',409);
@@ -213,7 +282,10 @@ function createCommunity(store, gateway, promotions) {
     if (!row) throw new RuleError('التذكرة غير موجودة.',404);
     return exclusive('ticket:'+row.owner,async()=>{
       const ticket=db.ticket(row.id);
-      await ticketStaff(actor,ticket);
+      const ctx=await ticketStaff(actor,ticket);
+      if (db.claimChange(ticket.id)?.synced===0) throw new RuleError('يجري تحديث أذونات التذكرة. حاول بعد لحظة.',409);
+      if (ticket.assignee && ticket.assignee!==actor && !permits(ctx,ctx.actor,0n))
+        throw new RuleError('إدارة التذكرة بعد استلامها للمستلم أو Administrator.',403);
       if (!ticket.channel || !['open','closed'].includes(ticket.state)) throw new RuleError('التذكرة غير متاحة الآن.',409);
       if (action==='check-delete') return;
       if (action==='rename' || action==='delete') {
@@ -251,6 +323,11 @@ function createCommunity(store, gateway, promotions) {
         if (latest && ['opening','closing','reopening'].includes(latest.state)) await finishTicket(latest);
       }); } catch {}
     }
+    for (const row of db.pendingClaims()) {
+      try { await exclusive('ticket:'+row.owner,()=>finishClaim(row)); }
+      catch (err) { console.warn('Ticket claim',row.id,err.code || err.message); }
+    }
+    for (const award of db.pendingAdvancements()) await advance(award.member);
   }
   return {moderate,checkModeration,submit,review,openTicket,ticketAction,manageTicket,support,reviewer,dashboard,saveSettings,recover,manager};
 }

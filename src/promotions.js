@@ -26,8 +26,8 @@ function canDemote(ctx) {
     (ctx.actor.id===ctx.operatorId && memberAccess(ctx,ctx.actor).admin));
 }
 
-function checkPlan(ctx, plan, allowed) {
-  const operator = checkOperator(ctx, allowed);
+function checkPlan(ctx, plan, allowed, ticketReward=false) {
+  const operator = ticketReward ? memberAccess(ctx,ctx.bot) : checkOperator(ctx, allowed);
   if (plan.direction === 'demote' && !canDemote(ctx)) {
     throw new RuleError('التخفيض يحتاج صلاحية Administrator.',403);
   }
@@ -86,14 +86,14 @@ function makeService(store, gateway, allowed = new Set()) {
     return { member: ctx.target.name, target, plan };
   }
 
-  async function apply(entry, ctx) {
+  async function apply(entry, ctx, ticketReward) {
     const { plan } = entry;
     // A restarted process may see an intermediate state. Never reinterpret it as a new step.
     const expected = new Set([...plan.before, plan.to, plan.anchor]);
     if (ctx.target.roles.some(id => rankedIds.has(id) && !expected.has(id))) {
       throw new RuleError('تغيّرت درجة العضو خارج هذه العملية. راجع رتب العضو قبل الاستكمال.', 409);
     }
-    checkPlan(ctx, plan, allowed);
+    checkPlan(ctx, plan, allowed,ticketReward);
     const held = new Set(ctx.target.roles);
     // Single-role PUT/DELETE preserves unrelated concurrent changes. Both operations are idempotent.
     const group = catalog.categories.find(c => c.id === plan.group);
@@ -115,18 +115,22 @@ function makeService(store, gateway, allowed = new Set()) {
     }
     if (entry?.state === 'done') return entry;
     const ctx = await gateway.context(request.actor, request.target);
-    checkOperator(ctx, allowed);
+    const award = request.source==='ticket-points' && store.community.advancementFor(request.target);
+    const ticketReward = award && request.id==='ticket-points:'+award.id && ctx.actor.bot &&
+      ctx.actor.id===ctx.bot.id && ctx.bot.id===catalog.botId && request.count===1 && request.direction==='promote' &&
+      (entry ? entry.source==='ticket-points' && entry.plan.from===award.grade : request.expectedFrom===award.grade);
+    if (!ticketReward) checkOperator(ctx, allowed);
     if (!entry) {
       if (store.pending(request.target)) throw new RuleError('توجد ترقية سابقة قيد الاستكمال لهذا العضو.', 409);
       const plan = planPromotion(ctx.target.roles, request.direction, request.count);
       if (Object.hasOwn(request, 'expectedFrom') && plan.from !== request.expectedFrom) {
         throw new RuleError('تغيّرت درجة العضو بعد المعاينة. اعرض الترقية من جديد.', 409);
       }
-      checkPlan(ctx, plan, allowed);
+      checkPlan(ctx, plan, allowed,ticketReward);
       plan.before = ctx.target.roles.filter(id => rankedIds.has(id));
       entry = store.begin(request.id, ctx.actor, ctx.target, request.source, plan);
     }
-    try { return await apply(entry, ctx); }
+    try { return await apply(entry, ctx,ticketReward); }
     catch (err) {
       store.note(entry.id, err instanceof RuleError ? err.message : 'تعذّر إكمال تعديل الرولات في ديسكورد.');
       throw err;

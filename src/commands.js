@@ -38,6 +38,7 @@ const baseCommands=[
     sub('claim','استلم التذكرة الحالية'),sub('unclaim','أعد التذكرة إلى قائمة الانتظار'),
     sub('close','أغلق الكتابة واحتفظ بسجل التذكرة'),sub('reopen','أعد فتح التذكرة الحالية')
   ]),
+  cmd('points','اعرض نقاط تذاكرك والمتبقي لترقيتك برد خاص'),
   cmd('rank','اعرض مستوى النشاط',[option(6,'member','العضو، أو اتركه فارغًا لعرض مستواك',false)]),
   cmd('top','Show text and voice leaderboards',[
     option(3,'period','Select a time range',false,{choices:Object.entries(periods).map(([value,name])=>({name,value}))}),
@@ -54,6 +55,7 @@ const baseCommands=[
 ];
 const commands=withArabicAliases(baseCommands);
 const chatAliases={
+  'نقاطي':'points','نقاط':'points',
   'تخفيض':'demote','بنق':'ping','مساعدة':'help','اوامر':'help','أوامر':'help','ر':'roles','رول':'roles','رولات':'roles','سيرفر':'server','مستوى':'rank','توب':'top',
   'تحذير':'warn','سحب-تحذير':'unwarn','تحذيرات':'warnings','تايم':'timeout','فك-تايم':'untimeout',
   'ميوت':'mute','فك-ميوت':'unmute','قفل':'lock','فتح':'unlock','طرد':'kick','حظر':'ban','بان':'ban','بأن':'ban',
@@ -61,6 +63,7 @@ const chatAliases={
 };
 const helpText=[
   '**أوامر BlueLand Empire**',
+  'نقاط التذاكر للطاقم · /نقاطي أو +نقاطي لمعرفة المتبقي للدرجة التالية.',
   'الطاقم · +ترقية @العضو أو +تخفيض @العضو لدرجة واحدة. أضف عدد الدرجات بعد المنشن، مثل +ترقية @العضو 2 أو +تخفيض @العضو 2. /promote، /dashboard',
   'المساعد · يقدر مالك السيرفر والمسؤول المخوّل يكلموا Hermes بالمنشن أو في الخاص.',
   'الإشراف · /warn، /warnings، /unwarn، /mute، /unmute، /timeout، /untimeout، /lock، /unlock، /kick، /ban، /unban',
@@ -91,6 +94,10 @@ function parseChat(text) {
   }
   const action=Object.hasOwn(chatAliases,first) ? chatAliases[first] : Object.values(chatAliases).includes(first) ? first : null;
   if (!action) return null;
+  if (action==='points') {
+    if (parts.length) throw new RuleError('اكتب +نقاطي لعرض رصيدك الشخصي.');
+    return {action};
+  }
   if (action==='demote') return {action,...parseRankChangeArgs(parts,'+تخفيض')};
   if (action==='top') return null;
   if (['ping','help','server','roles'].includes(action)) return {action};
@@ -143,6 +150,14 @@ function commandRunner({store,community,promotions,readyGuild,pair,bulkRole,now=
     if (action==='server') { const g=readyGuild(); return g.name+' · '+g.memberCount+' أعضاء · '+g.roles.cache.size+' رول.'; }
     if (action==='roles') return readyGuild().roles.cache.size+' رول في BlueLand، منها '+catalog.categories.reduce((sum,c)=>sum+c.ranks.length,0)+' درجة. الفئات بالترتيب:\n'+catalog.categories.map(c=>c.name).join(' ← ');
     if (action==='dashboard') return pair(actor);
+    if (action==='points') {
+      const {points}=await community.dashboard(actor);
+      const lines=['نقاط تذاكرك: **'+points.total+'**'+(points.grade?' · '+points.grade:'')];
+      if (!points.threshold) lines.push('رتبتك الحالية خارج نظام نقاط الترقيات.');
+      else if (!points.remaining) lines.push('اكتمل رصيد الترقية إلى **'+points.next+'**، بانتظار تأكيد تنفيذها.');
+      else lines.push('رصيد الدرجة: **'+points.available+' / '+points.threshold+'** · باقي **'+points.remaining+'** نقطة للترقية إلى **'+points.next+'**.');
+      return lines.join('\n');
+    }
     if (action==='promote' || action==='demote') {
       const entry=await promotions.execute({id:delivery,actor,target:input.target,source:'discord',direction:action,count:input.count});
       const next = roles.get(entry.plan.to).label;
