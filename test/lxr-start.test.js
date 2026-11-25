@@ -5,7 +5,7 @@ const {ChannelType,Collection,MessageFlags,MessagePayload,PermissionsBitField,Ro
 const {catalog}=require('../src/ladder');
 const {createLxrStart}=require('../src/lxr-start');
 
-const ROOM='1574894916872572958', ROLE='1574013661671067758';
+const ROOM='1574894916872572958', ROLE='1574013661671067758', PIC_ROLE='1574013659665932318';
 const SOURCE_CHANNEL='1574640612500578495', SOURCE_MESSAGE='1575133335510978721';
 const SOURCE_URL='https://cdn.discordapp.com/attachments/1574640612500578495/1575133334529376276/IMG_3553.jpg?test=1';
 const POST='200000000000000006', USER='200000000000000007';
@@ -16,13 +16,15 @@ function fixture({wrongChannel=false, badUrl=false, existing=null, history=true,
   const calls=[], posts=new Collection();
   if (existing) posts.set(existing.id,existing);
   const role={id:ROLE,managed:false,editable:true,permissions:new PermissionsBitField(211793497918465n)};
+  const picRole={id:PIC_ROLE,managed:false,editable:true,permissions:new PermissionsBitField(211793430809601n)};
   const member={id:USER,user:{bot:false},roles:{cache:new Collection(),async add(id) {calls.push(['grant',id]);this.cache.set(id,role);}}};
   const rawRoles=[];
   const overwrites=[];
   const client={user:{id:catalog.botId},options:{},rest:{async put(route){
-    assert.equal(route,Routes.guildMemberRole(catalog.guildId,USER,ROLE));
-    calls.push(['grant',ROLE]);
-    rawRoles.push(ROLE);
+    const id=[ROLE,PIC_ROLE].find(id=>route===Routes.guildMemberRole(catalog.guildId,USER,id));
+    assert.ok(id,'only the clicker and a self-assignable role may be targeted');
+    calls.push(['grant',id]);
+    rawRoles.push(id);
   },async get(route){
     if (route===Routes.guildMember(catalog.guildId,USER)) return {user:{id:USER,bot:false},roles:[...rawRoles]};
     if (route===Routes.guildChannels(catalog.guildId)) return [{permission_overwrites:overwrites}];
@@ -49,14 +51,14 @@ function fixture({wrongChannel=false, badUrl=false, existing=null, history=true,
       return message;
     }};
   const guild={id:catalog.guildId,client,channels:{async fetch(id) {assert.equal(id,ROOM);return channel;}},
-    members:{async fetch(options){assert.equal(options.user,USER);return member;}},roles:{async fetch(id){assert.equal(id,ROLE);return role;}}};
+    members:{async fetch(options){assert.equal(options.user,USER);return member;}},roles:{async fetch(id){return id===ROLE?role:id===PIC_ROLE?picRole:null;}}};
   const fetchImage=async url=>{
     assert.equal(url,SOURCE_URL);
     calls.push(['download']);
     // Supply wrong image bytes for the independent digest failure scenario.
     return fetchResponse();
   };
-  return {calls,posts,channel,guild,role,member,client,fetchImage,rawRoles,overwrites,
+  return {calls,posts,channel,guild,role,picRole,member,client,fetchImage,rawRoles,overwrites,
     make(options){return createLxrStart({readyGuild:()=>guild,fetchImage,...options});}};
 }
 
@@ -116,7 +118,7 @@ test('all five section choices privately reply with an Embed',async()=>{
       assert.match(description,/بحق اي مخالف \*\*$/u);
     }
     if (value==='branches') assert.equal(description,'لا توجد لدينا اي فروع أخرى');
-    if (value==='roles') assert.deepEqual(pick.seen[0].components[0].components.map(x=>[x.label,Boolean(x.disabled)]),[['Nickname',false],['Pic',true]]);
+    if (value==='roles') assert.deepEqual(pick.seen[0].components[0].components.map(x=>[x.label,Boolean(x.disabled)]),[['Nickname',false],['Pic',false]]);
   }
   assert.deepEqual(f.calls,[]);
 });
@@ -132,16 +134,13 @@ test('Nickname grants only the exact role to the clicker, reads it back and avoi
   assert.deepEqual(f.calls,[['grant',ROLE]]);
 });
 
-test('forged, out-of-channel, Pic and elevated-role interactions never assign a role',async()=>{
+test('forged, out-of-channel and elevated-role interactions never assign a role',async()=>{
   const f=fixture(), panel=f.make();
   for (const overrides of [{author:USER},{channel:'200000000000000008'},{ephemeral:false}]) {
     const press=interaction(f,{button:'nick',...overrides});
     assert.equal(await panel.handle(press),false);
     assert.deepEqual(press.seen,[]);
   }
-  const pic=interaction(f,{button:'pic'});
-  assert.equal(await panel.handle(pic),true);
-  assert.equal(pic.seen[0].embeds.length,1);
   f.role.permissions=new PermissionsBitField(PermissionsBitField.Flags.Administrator);
   const nick=interaction(f,{button:'nick'});
   assert.equal(await panel.handle(nick),true);
@@ -194,4 +193,56 @@ test('Nickname refuses overwrite allows, including an otherwise ordinary SendMes
     assert.match(press.seen[1].embeds[0].description,/تعذّر/u);
     assert.deepEqual(f.calls,[]);
   }
+});
+
+test('the private map includes the 11 requested channel links in order',async()=>{
+  const f=fixture(), pick=interaction(f,{value:'map'});
+  await f.make().handle(pick);
+  const [reply]=pick.seen;
+  assert.equal(reply.flags,MessageFlags.Ephemeral);
+  assert.deepEqual([...reply.embeds[0].description.matchAll(/<#(\d+)>/gu)].map(x=>x[1]),[
+    '1575145872239362128','1575146300545175562','1575125050170806373','1575140485884936274','1575140911338496010',
+    '1575141111805116466','1574894916872572958','1574909644336271361','1574909791204147350','1575122634327335124','1575123151329689600']);
+  assert.match(reply.embeds[0].description,/<:G_21:1574000061229305886>/u);
+  assert.deepEqual(f.calls,[]);
+});
+
+test('public roles shows the six requested roles and ticket link without a ping or grant',async()=>{
+  const f=fixture(), pick=interaction(f,{value:'public-roles'});
+  await f.make().handle(pick);
+  const [reply]=pick.seen;
+  assert.equal(reply.flags,MessageFlags.Ephemeral);
+  assert.deepEqual([...reply.embeds[0].description.matchAll(/<@&(\d+)>/gu)].map(x=>x[1]),[
+    '1574074692455628973','1574013619631431790','1574013615726661724','1574013629777448980','1574013633539608698','1574013636781805588']);
+  assert.match(reply.embeds[0].description,/<#1575141111805116466>/u);
+  assert.match(reply.embeds[0].description,/<:R_46:1573999906215960667>/u);
+  assert.match(reply.embeds[0].description,/<:R_44:1573999951321636864>/u);
+  assert.deepEqual(reply.allowed_mentions.parse,[]);
+  assert.deepEqual(f.calls,[]);
+});
+
+test('Pic grants only the exact photo role to the clicker; repeat clicks do not write again',async()=>{
+  const f=fixture(), panel=f.make();
+  for (const expected of ['تم إعطاؤك رتبة pic.','رتبة pic موجودة عندك بالفعل.']) {
+    const press=interaction(f,{button:'pic'});
+    assert.equal(await panel.handle(press),true);
+    assert.equal(press.seen[0].flags,MessageFlags.Ephemeral);
+    assert.equal(press.seen[1].embeds[0].description,expected);
+  }
+  assert.deepEqual(f.calls,[['grant',PIC_ROLE]]);
+});
+
+test('Pic rejects role escalation, an unsafe channel overwrite, or a non-private control',async()=>{
+  for (const unsafe of [f=>{f.picRole.permissions=new PermissionsBitField(PermissionsBitField.Flags.ManageRoles);},
+    f=>{f.overwrites.push({id:PIC_ROLE,type:0,allow:String(PermissionsBitField.Flags.AttachFiles)});}]) {
+    const f=fixture();
+    unsafe(f);
+    const press=interaction(f,{button:'pic'});
+    await f.make().handle(press);
+    assert.match(press.seen[1].embeds[0].description,/تعذّر إعطاء رتبة pic/u);
+    assert.deepEqual(f.calls,[]);
+  }
+  const f=fixture(), press=interaction(f,{button:'pic',ephemeral:false});
+  assert.equal(await f.make().handle(press),false);
+  assert.deepEqual(f.calls,[]);
 });

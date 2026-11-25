@@ -11,9 +11,9 @@ const ROOM='1574894916872572958';
 const SELECT='lxr-start:sections';
 const NICK='lxr-start:nick';
 const PIC='lxr-start:pic';
-const NICK_ROLE='1574013661671067758';
-// Refuse any new server-level permissions on this self-assignable role.
-const NICK_PERMISSION_CEILING=211793497918465n;
+// Refuse any new server-level permissions on either self-assignable role.
+const NICK_ROLE={id:'1574013661671067758',name:'nick',label:'Nickname',ceiling:211793497918465n};
+const PIC_ROLE={id:'1574013659665932318',name:'pic',label:'Pic',ceiling:211793430809601n};
 const PANEL_PERMISSIONS=[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.ReadMessageHistory,
   PermissionFlagsBits.SendMessages,PermissionFlagsBits.EmbedLinks,PermissionFlagsBits.AttachFiles];
 const SOURCE_CHANNEL='1574640612500578495';
@@ -90,16 +90,35 @@ const replyEmbed=(description,title)=>{
   if (title) card.setTitle(title);
   return {embeds:[card],allowedMentions:NO_PINGS};
 };
+const channelMap=[
+  '**خريطة رومات خادم LXR كالاتي  ، ❕**','',
+  '`#` الرومات العامة  :','> `-` <#1575145872239362128>','> `-` <#1575146300545175562>','',
+  '`#` رومات الادارة','> `-` <#1575125050170806373>','> `-` <#1575140485884936274>','',
+  '`#` رومات الـدعم والـتسليمات','> `-` <#1575140911338496010>','> `-` <#1575141111805116466>','',
+  '`#` الرومات المهمة داخل السيرفر','> `-` <#1574894916872572958>','> `-` <#1574909644336271361>','> `-` <#1574909791204147350>','',
+  '`#` رومات الاعلانات وكل مايخص الإعلانات','> `-` <#1575122634327335124>','> `-` <#1575123151329689600>','',
+  'هذا كل مايخص رومات LXR  ،  تدور شي مضيعه؟ بس اسال بالشات وبيردون عليك <:G_21:1574000061229305886>'
+].join('\n');
+const publicRoles=[
+  '**رتب امبراطورية LXR**','',
+  '<@&1574074692455628973>','رتبة لـ الاشخاص الذين قامو بدعم السيرفر ب بوست <:R_46:1573999906215960667>','',
+  '<@&1574013619631431790>','رتبة لـ شيبات السيرفرات التي هي 25k+ و الشخصيات المهمة .','',
+  '<@&1574013615726661724>','رتبة لـ اصحاب السيرفرات فوق الـ15k عضو  .','',
+  '<@&1574013629777448980>','رتبة لـ اصدقاء شيبات LXR .','',
+  '<@&1574013633539608698>','رتبة لـلبنات الموثقات بواسطة مسؤولة البنات .','',
+  '<@&1574013636781805588>   <:R_44:1573999951321636864>','رتبة لـ الاشخاص الذين قامو بشراء اعلانات','',
+  '**للحصول على اي رتبة من الاعلى توجه لـ تذكرة الدعم** <#1575141111805116466>'
+].join('\n');
 function sectionReply(section) {
   switch (section) {
     case 'rules': return replyEmbed(rules);
     case 'branches': return replyEmbed('لا توجد لدينا اي فروع أخرى','الفروع');
-    case 'map': return replyEmbed('الخريطة غير متاحة حالياً.','الخريطة');
-    case 'public-roles': return replyEmbed('الرتب العامة غير متاحة حالياً.','رتب LXR العامة');
-    case 'roles': return {...replyEmbed('اضغط Nickname لتحصل على رتبة النك.\nزر Pic غير مفعّل حالياً.','Nickname & Pic Roles'),
+    case 'map': return replyEmbed(channelMap,'الخريطة');
+    case 'public-roles': return replyEmbed(publicRoles,'LXR Puplic Roles :');
+    case 'roles': return {...replyEmbed('اضغط Nickname لتحصل على رتبة النك، أو Pic لتحصل على رتبة الصور.','Nickname & Pic Roles'),
       components:[new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(NICK).setLabel('Nickname').setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId(PIC).setLabel('Pic').setStyle(ButtonStyle.Secondary).setDisabled(true))]};
+        new ButtonBuilder().setCustomId(PIC).setLabel('Pic').setStyle(ButtonStyle.Secondary))]};
     default: return replyEmbed('هذا القسم غير متاح حالياً.');
   }
 }
@@ -149,32 +168,29 @@ function createLxrStart({readyGuild,fetchImage=fetch,loadBanner=client=>download
       return true;
     }
     if (!i.isButton() || (id!==NICK && id!==PIC) || !hasControl(i.message,id) || !i.message.flags?.has(MessageFlags.Ephemeral)) return false;
-    if (id===PIC) {
-      await i.reply({...replyEmbed('زر Pic غير مفعّل حالياً.'),flags:MessageFlags.Ephemeral}).catch(()=>{});
-      return true;
-    }
+    const target=id===NICK?NICK_ROLE:PIC_ROLE;
     try {
       await i.deferReply({flags:MessageFlags.Ephemeral});
       const guild=readyGuild();
       const rest=guild.client.rest;
       const memberRoute=Routes.guildMember(guild.id,i.user.id);
       const isMember=m=>m?.user?.id===i.user.id && !m.user.bot && Array.isArray(m.roles);
-      const [role,member]=await Promise.all([guild.roles.fetch(NICK_ROLE,{force:true,cache:false}),rest.get(memberRoute)]);
-      if (role?.id!==NICK_ROLE || !role.editable || role.managed || (role.permissions.bitfield & ~NICK_PERMISSION_CEILING)!==0n ||
-          !isMember(member)) throw new Error('Invalid LXR nickname role or member');
-      const already=member.roles.includes(NICK_ROLE);
+      const [role,member]=await Promise.all([guild.roles.fetch(target.id,{force:true,cache:false}),rest.get(memberRoute)]);
+      if (role?.id!==target.id || !role.editable || role.managed || (role.permissions.bitfield & ~target.ceiling)!==0n ||
+          !isMember(member)) throw new Error('Invalid LXR self-assignable role or member');
+      const already=member.roles.includes(target.id);
       if (!already) {
         const rooms=await rest.get(Routes.guildChannels(guild.id));
         // Even a basic channel Allow can supersede a different role's Deny.
-        if (rooms.some(room=>room.permission_overwrites?.some(overwrite=>overwrite.id===NICK_ROLE &&
-            BigInt(overwrite.allow)!==0n))) throw new Error('LXR nickname role has unsafe channel permissions');
-        await rest.put(Routes.guildMemberRole(guild.id,i.user.id,NICK_ROLE),{reason:'LXR Empire · Nickname self-role'});
+        if (rooms.some(room=>room.permission_overwrites?.some(overwrite=>overwrite.id===target.id &&
+            BigInt(overwrite.allow)!==0n))) throw new Error('LXR self-assignable role has unsafe channel permissions');
+        await rest.put(Routes.guildMemberRole(guild.id,i.user.id,target.id),{reason:`LXR Empire · ${target.label} self-role`});
         const checked=await rest.get(memberRoute);
-        if (!isMember(checked) || !checked.roles.includes(NICK_ROLE)) throw new Error('LXR nickname role not verified');
+        if (!isMember(checked) || !checked.roles.includes(target.id)) throw new Error('LXR self-assignable role not verified');
       }
-      await i.editReply(replyEmbed(already?'رتبة nick موجودة عندك بالفعل.':'تم إعطاؤك رتبة nick.'));
+      await i.editReply(replyEmbed(already?`رتبة ${target.name} موجودة عندك بالفعل.`:`تم إعطاؤك رتبة ${target.name}.`));
     } catch {
-      if (i.deferred || i.replied) await i.editReply(replyEmbed('تعذّر إعطاء رتبة nick حالياً.')).catch(()=>{});
+      if (i.deferred || i.replied) await i.editReply(replyEmbed(`تعذّر إعطاء رتبة ${target.name} حالياً.`)).catch(()=>{});
     }
     return true;
   }
