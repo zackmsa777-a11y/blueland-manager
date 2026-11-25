@@ -4,6 +4,7 @@ const {Routes} = require('discord.js');
 const {catalog,roles,RuleError,parseRankChangeArgs} = require('./ladder');
 const {kinds,requestStates} = require('./community');
 const {activity}=require('../config/discord-features.json');
+const {PANEL:ticketPanel}=require('./ticket-ui');
 const {withArabicAliases, commandName, subcommandName} = require('./command-aliases');
 const {parseTop,periods,modes,topReply}=require('./activity-top');
 const formatActivity=(template,values)=>template.replace(/\{(\w+)\}/g,(match,key)=>Object.hasOwn(values,key)?String(values[key]):match);
@@ -68,7 +69,7 @@ const helpText=[
   'المساعد · يقدر مالك السيرفر والمسؤول المخوّل يكلموا Hermes بالمنشن أو في الخاص.',
   'الإشراف · /warn، /warnings، /unwarn، /mute، /unmute، /timeout، /untimeout، /lock، /unlock، /kick، /ban، /unban',
   'الطلبات · /request submit للتقديم، /request status لمتابعة القرار',
-  'الدعم · لوحة التذاكر في <#1574014072947736596> للدعم الفني أو الشكوى على إداري.',
+  `الدعم · لوحة التذاكر في <#${ticketPanel}> للدعم الفني أو الشكوى على إداري.`,
   'داخل التذكرة فقط · +close للإغلاق دون حذف، +rename اسم-التذكرة، +add @العضو أو معرّفه، +remove @العضو أو معرّفه، +delete للحذف بعد التأكيد. الإدارة للطاقم المخوّل.',
   'الألعاب · /game roulette، /game chairs، /game mafia، /game rps، /game bag، /game shop',
   'ألعاب الشات · .روليت [المدة، مثل 10m]، .كراسي، .مافيا، .حجر، .حقيبة، .متجر',

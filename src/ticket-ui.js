@@ -2,7 +2,7 @@
 
 const {EmbedBuilder}=require('discord.js');
 
-const PANEL = '1574014072947736596';
+const PANEL = '1575141111805116466';
 const SUPPORT = '1574013576694210731';
 const kinds = Object.freeze({technical:'الدعم الفني',complaint:'شكوى على إداري'});
 const button = (action,label,style=2) => ({type:2,style,label,custom_id:'blticket:'+action});
