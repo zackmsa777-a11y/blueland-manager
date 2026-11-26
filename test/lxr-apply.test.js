@@ -177,6 +177,29 @@ test('uncertain submission recovers the original private receipt instead of a se
   assert.equal(store.applications.find(userId),undefined);
 });
 
+test('reset cannot interrupt a submission or a receipt recovery, but can unblock the same member once both settle',async t=>{
+  const store=openStore(':memory:');t.after(()=>store.close());
+  let finishDelivery,finishRecovery;
+  const deliver=()=>new Promise((_,reject)=>{finishDelivery=reject;});
+  deliver.recover=()=>new Promise((_,reject)=>{finishRecovery=reject;});
+  const f=setup({deliver,receiptStore:store.applications});await f.app.publish();
+  const start=async()=>{const select=f.make('select',firstId);await f.app.handle(select);return select;};
+  const select=await start(), form=f.make('modal',select.events[0][1].custom_id);
+  const sending=f.app.handle(form);
+  assert.equal(f.app.reset(userId),'busy'); // Even while deferReply is pending, before the claim.
+  await new Promise(setImmediate);
+  assert.equal(store.applications.find(userId)?.id,request);
+  assert.equal(f.app.reset(userId),'busy');
+  finishDelivery(new Error('uncertain delivery'));await sending;
+  const recovering=f.app.handle(f.make('select',firstId));
+  assert.equal(f.app.reset(userId),'busy');
+  await new Promise(setImmediate);
+  finishRecovery(new Error('unconfirmed receipt'));await recovering;
+  assert.equal(f.app.reset(userId),'reset');
+  assert.equal(store.applications.find(userId),undefined);
+  assert.equal((await start()).events[0][0],'modal');
+});
+
 test('only a definitive no-write failure releases the application for a fresh submission',async t=>{
   const store=openStore(':memory:');t.after(()=>store.close());
   let attempts=0;

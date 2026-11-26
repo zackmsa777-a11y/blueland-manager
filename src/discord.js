@@ -95,7 +95,8 @@ function connectDiscord(store, env) {
       .catch(err=>console.warn('LXR start panel:',err.code || err.message));
   };
   const onMessage=createMessageHandler({authorize:community.dashboard,service,store,publicOrigin:env.PUBLIC_ORIGIN,run,parse:parseChat,shortcuts,
-    ticketMessages:tickets.text,assertGenericChannel:gateway.assertGenericChannel});
+    ticketMessages:tickets.text,assertGenericChannel:gateway.assertGenericChannel,
+    applicationResetContext:context,resetApplication:lxrApply.reset});
   const voice=createVoiceActivity(store.community);
   let voiceTimer;
   let dailyTopTimer;

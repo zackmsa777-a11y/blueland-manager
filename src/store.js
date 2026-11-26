@@ -60,7 +60,7 @@ function openStore(file) {
         return db.prepare('INSERT OR IGNORE INTO lxr_application_delivery(user_id,request_id,kind) VALUES(?,?,?)').run(userId,id,kind).changes===1;
       },
       clear({id,userId,kind}) {
-        db.prepare('DELETE FROM lxr_application_delivery WHERE user_id=? AND request_id=? AND kind=?').run(userId,id,kind);
+        return db.prepare('DELETE FROM lxr_application_delivery WHERE user_id=? AND request_id=? AND kind=?').run(userId,id,kind).changes===1;
       }
     },
     acceptance:{

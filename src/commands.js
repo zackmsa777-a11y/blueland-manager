@@ -78,10 +78,17 @@ const helpText=[
   'الطلبات والألعاب بالعربي · /طلب تقديم، /طلب حالة، /تذكرة فتح، /ألعاب روليت، /ألعاب كراسي، /ألعاب مافيا، /ألعاب حجر-ورقة-مقص، /ألعاب حقيبة، /ألعاب متجر',
   'اختصارات الشات · +ر للرولات، +بان @العضو [السبب]، +فك-بان معرّف_العضو. السبب اختياري في أوامر الإشراف.',
   'مالك السيرفر · +ر الجميع @الرول للأعضاء أو +ر البوتات @الرول للبوتات. يقبل معرّف الرول أيضًا، ويطلب تأكيدًا للرولات الحساسة.',
+  'التقديم · +rs apply @العضو لفك تعليق طلبه (رتبة OG’s أو أعلى).',
   'السيرفر · /roles، /server، /ping، /rank، /top',
   'التوب · توب، توب يومي، توب أسبوعي، توب شهري. للتخصص: توب كتابي يومي أو توب فويس شهري.'
 ].join('\n');
+const isResetApply=text=>/^\+rs[ \t]+apply(?=$|\s)/u.test(text);
 function parseChat(text) {
+  if (isResetApply(text)) {
+    const match=/^\+rs[ \t]+apply[ \t]+<@!?([1-9]\d{16,19})>$/u.exec(text);
+    if (!match || BigInt(match[1])>0xffffffffffffffffn) throw new RuleError('اكتب `+rs apply @العضو` بمنشن عضو واحد.');
+    return {action:'reset-apply',target:match[1]};
+  }
   const top=parseTop(text);
   if (top) return top;
   if (!text.startsWith('+')) return null;
@@ -238,4 +245,4 @@ async function registerCommands(client,guildId,definitions=commands) {
   const live=await client.rest.get(endpoint);
   return definitions.filter(def=>live.some(c=>JSON.stringify(shape(c))===JSON.stringify(shape(def)))).length;
 }
-module.exports={commands,chatAliases,helpText,parseChat,commandRunner,interactionInput,registerCommands};
+module.exports={commands,chatAliases,helpText,isResetApply,parseChat,commandRunner,interactionInput,registerCommands};

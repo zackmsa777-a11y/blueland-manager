@@ -250,6 +250,15 @@ function createLxrApply({readyGuild,openTicket,receipts,loadBanner=downloadAppli
     await invalid();
     return true;
   }
-  return {publish,handle};
+  function reset(userId) {
+    if (!snowflake(userId)) throw new Error('Invalid applicant ID');
+    if (recovering.has(userId) || [...sessions.values()].some(s=>s.actor===userId && s.stage==='busy')) return 'busy';
+    // Clear only the reservation we read, not any prior ticket or a different submission.
+    const record=receipts.find(userId);
+    if (!record || !receipts.clear(record)) return 'none';
+    for (const [token,s] of sessions) if (s.actor===userId) sessions.delete(token);
+    return 'reset';
+  }
+  return {publish,handle,reset};
 }
 module.exports={createLxrApply,downloadApplicationBanner};

@@ -1,6 +1,17 @@
 'use strict';
 
-const { catalog, roles, RuleError, parsePromotion } = require('./ladder');
+const { catalog, roles, RuleError, parsePromotion, compareRoles } = require('./ladder');
+const { isResetApply } = require('./commands');
+const APPLY_RESET_ROLE='1574012921090932836';
+const canResetApplication=(context,actorId)=>{
+  const user=context?.actor, floor=context?.roles?.get(APPLY_RESET_ROLE);
+  if (user?.id!==actorId || user.bot!==false || !Array.isArray(user.roles) ||
+      floor?.id!==APPLY_RESET_ROLE || !Number.isSafeInteger(floor.position)) return false;
+  return user.roles.some(id=>{
+    const role=context.roles.get(id);
+    return role?.id===id && /^[1-9]\d{16,19}$/u.test(id) && Number.isSafeInteger(role.position) && compareRoles(role,floor)<=0;
+  });
+};
 
 function isSalamGreeting(text) {
   const plain=text.normalize('NFKC').replace(/[\p{M}\u0640\u200b-\u200f\u202a-\u202e\u2066-\u2069]/gu,'')
@@ -13,17 +24,18 @@ const {createDashImageLoader}=require('./dash-image');
 const {createAcceptMember}=require('./accept-member');
 
 function createMessageHandler({ authorize, service, store, publicOrigin, run, parse, shortcuts, ticketMessages, acceptOverwrites, assertGenericChannel,
-  loadDashImage=createDashImageLoader() }) {
+  applicationResetContext, resetApplication, loadDashImage=createDashImageLoader() }) {
   const acceptMember=createAcceptMember({store,overwrites:acceptOverwrites});
   return async function onMessage(message) {
     if (message.author.bot || message.webhookId) return;
     const inGuild=message.inGuild();
     if (inGuild && message.guildId!==catalog.guildId) return;
+    const text = message.content?.trim() || '';
+    const resetting=isResetApply(text);
     // Do not pass applicant text to any generic path, even if channel metadata is unavailable.
     if (inGuild && assertGenericChannel) {
-      try { await assertGenericChannel(message.channelId,{useCache:true}); } catch { return; }
+      try { await assertGenericChannel(message.channelId,{useCache:!resetting}); } catch { return; }
     }
-    const text = message.content?.trim() || '';
     const reply = output => message.reply({...(typeof output==='string'?{content:output}:output),allowedMentions:{parse:[],repliedUser:false}});
     const greeting=salamReply && isSalamGreeting(text);
     const replySalam=()=>reply({content:salamReply,failIfNotExists:true})
@@ -32,6 +44,26 @@ function createMessageHandler({ authorize, service, store, publicOrigin, run, pa
       if (!inGuild) {
         if (greeting) return await replySalam();
         if (run && ['+بنق','+ping','+مساعدة','+help'].includes(text)) await reply(await run({action:parse(text).action,actor:message.author.id}));
+        return;
+      }
+      if (resetting) {
+        if (!assertGenericChannel || !applicationResetContext || !resetApplication) return;
+        const privately=async content=>{
+          try { await message.author.send({content,allowedMentions:{parse:[]}}); } catch {}
+        };
+        const actorId=message.author.id;
+        const current=await Promise.resolve().then(()=>applicationResetContext(actorId)).catch(()=>null);
+        if (!canResetApplication(current,actorId)) return;
+        let target;
+        try { ({target}=parse(text)); }
+        catch { return await privately('اكتب `+rs apply @العضو` بمنشن عضو واحد.'); }
+        const confirmed=await Promise.resolve().then(()=>applicationResetContext(actorId,target)).catch(()=>null);
+        if (!confirmed) return await privately('تعذّر التحقق من العضو في السيرفر.');
+        if (!canResetApplication(confirmed,actorId)) return;
+        if (confirmed.target?.id!==target || confirmed.target.bot!==false) return await privately('تعذّر التحقق من العضو في السيرفر.');
+        const result=resetApplication(target);
+        await privately(result==='reset'?'تم فك تعليق الطلب. يقدر العضو يقدّم من جديد.':
+          result==='busy'?'الطلب قيد الإرسال أو التحقق. جرّب بعد شوي.':'ما فيه طلب معلّق لهذا العضو.');
         return;
       }
       // A fixed greeting in a ticket or its thread does not reach the assistant or earn XP.
@@ -119,6 +151,7 @@ function createMessageHandler({ authorize, service, store, publicOrigin, run, pa
       const total = result.plan.count > 1 ? ' (عدد الدرجات: **' + result.plan.count + '**)' : '';
       await reply('تمت ترقية <@' + target + '> من **' + old + '** إلى **' + next + '**' + total + '.');
     } catch (err) {
+      if (resetting) return; // Never expose application state or failures in the invoking channel.
       const text = err instanceof RuleError ? err.message : 'تعذّر تأكيد العملية الآن. راجع سجلها في لوحة الطاقم قبل إعادة الأمر.';
       await reply(text).catch(() => {});
     }
