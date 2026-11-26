@@ -86,10 +86,10 @@ function panelPayload(bytes) {
     nonce:SOURCE.message,enforceNonce:true,allowedMentions:NO_PINGS};
 }
 const isPanel=(m)=>m?.author?.id===catalog.botId && m.channelId===ROOM && hasControl(m,SELECT);
-function verifyPanel(m) {
+function verifiedPanelBanner(m) {
   if (!isPanel(m) || !snowflake(m.id) || m.content!=='' || m.embeds?.length!==2 || m.embeds[1]?.title!==TITLE ||
       m.embeds[1]?.description!==INTRO || m.embeds[1]?.footer?.text!==BRAND || m.components.length!==1 || m.components[0].components.length!==1 ||
-      m.attachments?.size!==1) return false;
+      ![0,1].includes(m.attachments?.size)) return false;
   const [art,copy]=m.embeds;
   for (const e of [art,copy]) if (e.url || e.author || e.thumbnail || e.video || e.fields?.length) return false;
   if (art.title || art.description || art.footer || copy.image) return false;
@@ -101,10 +101,13 @@ function verifyPanel(m) {
         return ['value','label','description'].every(k=>actual?.[k]===o[k]) && actual.emoji?.name===o.emoji &&
           !actual.emoji?.id && !actual.emoji?.animated && !actual.default;
       })) return false;
-  const a=m.attachments.first();
-  const expected=`/attachments/${ROOM}/${a?.id}/${BANNER}`, origins=['https://cdn.discordapp.com','https://media.discordapp.net'];
-  return a?.name===BANNER && a.size===SOURCE.size && snowflake(a.id) && originalPath(a.url,origins)===expected &&
-    originalPath(m.embeds[0]?.image?.url,origins)===expected;
+  // Discord can expose an embedded upload only through the image URL, without an attachment row.
+  const imageUrl=art.image?.url, attachment=m.attachments.first();
+  const url=m.attachments.size===0?imageUrl:attachment?.url;
+  const path=originalPath(url,['https://cdn.discordapp.com']), id=path?.split('/')[3];
+  if (!snowflake(id) || path!==`/attachments/${ROOM}/${id}/${BANNER}`) return false;
+  if (m.attachments.size===1 && (attachment?.id!==id || attachment.name!==BANNER || attachment.size!==SOURCE.size)) return false;
+  return originalPath(imageUrl,['https://cdn.discordapp.com','https://media.discordapp.net'])===path?url:false;
 }
 function createLxrApply({readyGuild,openTicket,receipts,loadBanner=downloadApplicationBanner,verifyExistingBanner=checkedBannerBytes,now=Date.now}) {
   let posting,knownId,verifiedId;
@@ -122,10 +125,8 @@ function createLxrApply({readyGuild,openTicket,receipts,loadBanner=downloadAppli
         !channel.permissionsFor(guild.members.me??catalog.botId)?.has(PANEL_PERMS)) throw new Error('Invalid application channel or permissions');
     const read=async id=>{
       const m=await channel.messages.fetch({message:id,force:true,cache:false});
-      if (m?.id!==id || !verifyPanel(m)) throw new Error('Unverified application panel');
-      const url=m.attachments.first().url;
-      if (originalPath(url,['https://cdn.discordapp.com'])!==`/attachments/${ROOM}/${m.attachments.first().id}/${BANNER}`)
-        throw new Error('Unverified application banner URL');
+      const url=m?.id===id && verifiedPanelBanner(m);
+      if (!url) throw new Error('Unverified application panel');
       await verifyExistingBanner(url);
       return verifiedId=id;
     };

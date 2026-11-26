@@ -263,6 +263,42 @@ test('Discord startup provisions a dedicated no-retry writer without changing th
   finally {discord.close();}
 });
 
+test('Discord embed-only banner readback activates the original application selector without a new post',async t=>{
+  const initial=setup();await initial.app.publish();
+  const original=initial.panel, banner=original.attachments.first().url+'?ex=synthetic';
+  const client=new Client({intents:[]});t.after(()=>client.destroy());
+  const message=image=>new Message(client,{id:panelId,channel_id:room,guild_id:guildId,content:'',flags:0,
+    author:{id:bot,username:'LXR Manager',bot:true},embeds:[{image:{url:image}},original.embeds[1]],components:original.components,attachments:[]});
+  const lookups=[];
+  const existing=message(banner);
+  const f=setup({existing,verifyExistingBanner:async url=>lookups.push(url),history:()=>new Collection([[panelId,existing]])});
+  assert.equal(await f.app.publish(),panelId);
+  assert.deepEqual(lookups,[banner]);
+  assert.equal(f.sends.length,0);
+  const selected=f.make('select',firstId,{from:existing});await f.app.handle(selected);
+  assert.equal(selected.events[0][0],'modal');
+  assert.deepEqual(selected.events[0][1].components.map(x=>x.component.custom_id),fields);
+});
+
+test('embed-only banners reject foreign origins, mismatched URLs and failed byte verification',async()=>{
+  const initial=setup();await initial.app.publish();
+  const original=initial.panel, url=original.attachments.first().url;
+  const existingWith=image=>({...original,attachments:new Collection(),embeds:[{image:{url:image}},original.embeds[1]]});
+  const setupFor=(existing,verifyExistingBanner)=>setup({existing,verifyExistingBanner,history:()=>new Collection([[panelId,existing]])});
+  const wrong=[url.replace('cdn.discordapp.com','example.org'),url.replace('cdn.discordapp.com','media.discordapp.net'),
+    url.replace(room,privateId),url.replace(original.attachments.first().id,'bogus'),url.replace(bannerName,'other.png'),url+'/extra'];
+  for (const image of wrong) {
+    const f=setupFor(existingWith(image),async()=>assert.fail('Unexpected banner download'));
+    await assert.rejects(f.app.publish(),/Unverified application panel/);
+    assert.equal(f.sends.length,0);
+  }
+  let checked=0;
+  const corrupt=setupFor(existingWith(url),async()=>{checked++;throw new Error('banner hash mismatch');});
+  await assert.rejects(corrupt.app.publish(),/banner hash mismatch/);
+  assert.equal(checked,1);
+  assert.equal(corrupt.sends.length,0);
+});
+
 test('existing panels must be unique, exact, and have verified banner bytes',async t=>{
   const f=setup();await f.app.publish();
   const original=f.panel;
