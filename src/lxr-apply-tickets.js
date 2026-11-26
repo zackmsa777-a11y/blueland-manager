@@ -2,7 +2,7 @@
 
 const {createHash}=require('node:crypto');
 const {ChannelType,DiscordAPIError,EmbedBuilder,MessagePayload,OverwriteType,PermissionFlagsBits:P,
-  RESTJSONErrorCodes:E,Routes,escapeMarkdown}=require('discord.js');
+  REST,RESTJSONErrorCodes:E,Routes,escapeMarkdown}=require('discord.js');
 const {catalog}=require('./ladder');
 
 const GUILD='1573975432838127708';
@@ -87,7 +87,8 @@ async function liveRoute(rest,dest,user,acl) {
       applicant?.user?.id!==user || applicant.user.bot || applicant.pending===true) fail('invalid guild membership');
   const assigned=[GUILD,...bot.roles].map(id=>byId.get(id));
   if (assigned.some(role=>!mask(role?.permissions))) fail('invalid bot roles');
-  return {reviewer,roles:bot.roles,base:assigned.reduce((permissions,role)=>permissions|BigInt(role.permissions),0n)};
+  return {reviewer,roles:bot.roles,parentAcl:parent.permission_overwrites,
+    base:assigned.reduce((permissions,role)=>permissions|BigInt(role.permissions),0n)};
 }
 
 function checkBot({reviewer,roles,base},acl) {
@@ -104,9 +105,9 @@ function checkBot({reviewer,roles,base},acl) {
   if (!has(perms,BOT_ALLOW|(reviewer.mentionable?0n:P.MentionEveryone))) fail('bot permissions unavailable');
 }
 
-function checkRoom(room,id,dest,topic,acl) {
+function checkRoom(room,id,dest,topic,acl,name=ROOM_NAME) {
   if (!snowflake(id) || room?.id!==id || room.guild_id!==GUILD || room.type!==ChannelType.GuildText ||
-      room.name!==ROOM_NAME || room.parent_id!==dest.parent || room.topic!==topic || !exactAcl(room.permission_overwrites,acl))
+      room.name!==name || room.parent_id!==dest.parent || room.topic!==topic || !exactAcl(room.permission_overwrites,acl))
     fail('room privacy not verified');
 }
 
@@ -209,7 +210,19 @@ function rethrow(error,safeToResubmit=false) {
   fail('delivery could not be verified',safeToResubmit);
 }
 
-function createApplicationTickets({readyGuild,getChannelWriteRest}) {
+const initialRoom=()=>({name:ROOM_NAME,closed:false,guests:[],assignee:null});
+const WRITE=P.SendMessages|P.SendMessagesInThreads|P.CreatePublicThreads|P.CreatePrivateThreads;
+function managedAcl({user,kind},state) {
+  return [...privateAcl(user,kind),...state.guests.map(id=>overwrite(id,OverwriteType.Member,PARTICIPANT))].map(item=>{
+    if (!state.closed || (item.id!==user && !state.guests.includes(item.id))) return item;
+    return {...item,allow:String(BigInt(item.allow)&~WRITE),deny:String(WRITE)};
+  });
+}
+function matchesRoom(room,id,key,state) {
+  try {checkRoom(room,id,DESTINATIONS[key.kind],marker(key.id),managedAcl(key,state),state.name);return true;}
+  catch(error) {if(error instanceof ApplicationError) return false;throw error;}
+}
+function createApplicationTickets({readyGuild,getChannelWriteRest,managementState}) {
   const applicants=new Map(),inFlightIds=new Set();
   // Block retries after an unverified write even if the room isn't listed yet. Never evict uncertainty.
   const unconfirmedWrites=new Set();
@@ -220,10 +233,16 @@ function createApplicationTickets({readyGuild,getChannelWriteRest}) {
     return guild.client;
   }
 
-  async function verifyRoom(rest,channelId,{id,user,kind},acl) {
+  async function verifyRoom(rest,channelId,key,acl,managed=false) {
+    const {id,user,kind}=key;
     const dest=DESTINATIONS[kind],live=await liveRoute(rest,dest,user,acl);
     const checked=await rest.get(Routes.channel(channelId),within());
-    checkRoom(checked,channelId,dest,marker(id),acl);
+    const saved=managed?managementState?.read(channelId):null;
+    if (saved) {
+      if (saved.key.id!==id || saved.key.user!==user || saved.key.kind!==kind ||
+          ![saved.current,saved.pending].some(s=>s && matchesRoom(checked,channelId,key,s)) ||
+          exactAcl(checked.permission_overwrites,live.parentAcl)) fail('room privacy not verified');
+    } else checkRoom(checked,channelId,dest,marker(id),acl);
     checkBot(live,checked.permission_overwrites);
   }
 
@@ -304,7 +323,7 @@ function createApplicationTickets({readyGuild,getChannelWriteRest}) {
       }
     }
 
-    await verifyRoom(rest,channelId,key,acl);
+    await verifyRoom(rest,channelId,key,acl,existing);
     if (ambiguousCreate) {
       // Only this fresh invocation knows it never attempted a message. History drift fails closed.
       if (!fresh) fail('delivery could not be verified');
@@ -365,7 +384,7 @@ function createApplicationTickets({readyGuild,getChannelWriteRest}) {
       const {rest}=connectedClient(),acl=privateAcl(user,kind);
       const channelId=await locateRoom(rest,marker(id));
       if (channelId===undefined) fail('room not found');
-      await verifyRoom(rest,channelId,key,acl);
+      await verifyRoom(rest,channelId,key,acl,true);
       await recoverMessage(rest,channelId,id,message=>matchesStoredReceipt(message,channelId,key));
       unconfirmedWrites.delete(id);
       return channelId;
@@ -376,4 +395,14 @@ function createApplicationTickets({readyGuild,getChannelWriteRest}) {
   return deliverApplication;
 }
 
-module.exports={createApplicationTickets,isApplicationDestination};
+const roomVerification={GUILD,BOT,DESTINATIONS,TOPIC_PREFIX,snowflake,within,initialRoom,matchesRoom,managedAcl,isApplicationDestination,exactAcl,
+  matchesStoredReceipt,verifyMessage,locateRoom};
+const createApplicationManager=options=>require('./lxr-apply-management').createApplicationManager(options,roomVerification);
+function createApplicationMutationRest(token,options={}) {
+  // Never replay an authenticated management command when Discord throttles a write.
+  const rest=new REST({version:'10',...options,retries:0,rejectOnRateLimit:()=>true}).setToken(token);
+  rest.clearHashSweeper();
+  rest.clearHandlerSweeper();
+  return rest;
+}
+module.exports={createApplicationTickets,isApplicationDestination,createApplicationManager,createApplicationMutationRest};

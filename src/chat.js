@@ -24,7 +24,7 @@ const {createDashImageLoader}=require('./dash-image');
 const {createAcceptMember}=require('./accept-member');
 
 function createMessageHandler({ authorize, service, store, publicOrigin, run, parse, shortcuts, ticketMessages, acceptOverwrites, assertGenericChannel,
-  applicationResetContext, resetApplication, loadDashImage=createDashImageLoader() }) {
+  applicationResetContext, resetApplication, applicationTicketMessages, loadDashImage=createDashImageLoader() }) {
   const acceptMember=createAcceptMember({store,overwrites:acceptOverwrites});
   return async function onMessage(message) {
     if (message.author.bot || message.webhookId) return;
@@ -32,6 +32,7 @@ function createMessageHandler({ authorize, service, store, publicOrigin, run, pa
     if (inGuild && message.guildId!==catalog.guildId) return;
     const text = message.content?.trim() || '';
     const resetting=isResetApply(text);
+    if (inGuild && applicationTicketMessages && await applicationTicketMessages(message,text)) return;
     // Do not pass applicant text to any generic path, even if channel metadata is unavailable.
     if (inGuild && assertGenericChannel) {
       try { await assertGenericChannel(message.channelId,{useCache:!resetting}); } catch { return; }

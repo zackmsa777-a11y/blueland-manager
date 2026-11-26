@@ -25,6 +25,9 @@ function openStore(file) {
       user_id TEXT PRIMARY KEY, request_id TEXT NOT NULL UNIQUE,
       kind TEXT NOT NULL CHECK(kind IN ('staff','girls','transfer'))
     );
+    CREATE TABLE IF NOT EXISTS lxr_application_room (
+      channel TEXT PRIMARY KEY, identity TEXT NOT NULL, current TEXT NOT NULL, pending TEXT
+    );
     CREATE TABLE IF NOT EXISTS accept_member_outbox (
       target TEXT PRIMARY KEY, channel TEXT NOT NULL, reference TEXT NOT NULL,
       confirmed INTEGER NOT NULL DEFAULT 0, attempted INTEGER, posted TEXT,
@@ -52,6 +55,25 @@ function openStore(file) {
     return code;
   }
   return {
+    applicationRooms:{
+      read(channel) {
+        const row=db.prepare('SELECT identity,current,pending FROM lxr_application_room WHERE channel=?').get(channel);
+        return row && {key:JSON.parse(row.identity),current:JSON.parse(row.current),pending:JSON.parse(row.pending)};
+      },
+      create(channel,key,current) {
+        return db.prepare('INSERT OR IGNORE INTO lxr_application_room (channel,identity,current) VALUES (?,?,?)')
+          .run(channel,JSON.stringify(key),JSON.stringify(current)).changes===1;
+      },
+      start(channel,current,pending) {
+        return db.prepare('UPDATE lxr_application_room SET pending=? WHERE channel=? AND current=? AND pending IS NULL')
+          .run(JSON.stringify(pending),channel,JSON.stringify(current)).changes===1;
+      },
+      finish(channel,previous,pending,current) {
+        return db.prepare('UPDATE lxr_application_room SET current=?,pending=NULL WHERE channel=? AND current=? AND pending IS ?')
+          .run(JSON.stringify(current),channel,JSON.stringify(previous),pending===null?null:JSON.stringify(pending)).changes===1;
+      },
+      remove(channel) {db.prepare('DELETE FROM lxr_application_room WHERE channel=?').run(channel);}
+    },
     applications:{
       find(userId) {
         return db.prepare('SELECT request_id AS id,user_id AS userId,kind FROM lxr_application_delivery WHERE user_id=?').get(userId);

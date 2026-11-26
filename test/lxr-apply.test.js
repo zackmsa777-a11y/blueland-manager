@@ -272,17 +272,27 @@ for (const [scenario,description] of [
   }
 });
 
-test('Discord startup provisions a dedicated no-retry writer without changing the normal REST policy',async t=>{
+test('Discord startup separates the normal, creation, and unqueued management REST policies',async t=>{
   const {REST}=require('discord.js');
   const {connectDiscord}=require('../src/discord');
   const store=openStore(':memory:');t.after(()=>store.close());
   const set=REST.prototype.setToken;
-  const retries=[];
-  t.mock.method(REST.prototype,'setToken',function(token){retries.push(this.options.retries);return set.call(this,token);});
+  const policies=[];
+  t.mock.method(REST.prototype,'setToken',function(token){
+    policies.push([this.options.retries,this.options.rejectOnRateLimit]);
+    return set.call(this,token);
+  });
   t.mock.method(REST.prototype,'get',async()=>({id:bot,flags:0}));
   const login=t.mock.method(Client.prototype,'login',async()=>{});
   const discord=connectDiscord(store,{DISCORD_BOT_TOKEN:'synthetic'});
-  try {await discord.start();assert.equal(login.mock.callCount(),1);assert.deepEqual(retries,[3,0]);}
+  try {
+    await discord.start();
+    assert.equal(login.mock.callCount(),1);
+    assert.deepEqual(policies.slice(0,2),[[3,null],[0,null]]);
+    assert.equal(policies[2][0],0);
+    assert.equal(policies[2][1]({method:'PATCH'}),true);
+    assert.equal(policies[2][1]({method:'DELETE'}),true);
+  }
   finally {discord.close();}
 });
 

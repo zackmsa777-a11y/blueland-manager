@@ -13,10 +13,10 @@ const { createDiscordGames } = require('./discord-games');
 const { createShortcutHandler } = require('./shortcut-dispatch');
 const { createLxrStart } = require('./lxr-start');
 const { createLxrApply } = require('./lxr-apply');
-const { createApplicationTickets } = require('./lxr-apply-tickets');
+const { createApplicationTickets,createApplicationManager,createApplicationMutationRest } = require('./lxr-apply-tickets');
 
 function connectDiscord(store, env) {
-  let client, api, timer, applicationChannelRest, recovering = false, cachedDirectory, refresh, validUntil = 0, attemptedToken;
+  let client, api, timer, applicationChannelRest, applicationMutationRest, recovering = false, cachedDirectory, refresh, validUntil = 0, attemptedToken;
   let connection = { code: 'offline', text: 'بانتظار ربط البوت' };
   const allowed = new Set((env.PROMOTER_ROLE_IDS || '').split(',').map(s => s.trim()).filter(Boolean));
   const botId = env.DISCORD_APPLICATION_ID || catalog.botId;
@@ -82,8 +82,9 @@ function connectDiscord(store, env) {
     lookupTicket:channel=>store.community.ticketByChannel(channel)});
   const tickets=require('./discord-tickets').createDiscordTickets({db:store.community,community,readyGuild});
   const lxrStart=createLxrStart({readyGuild});
+  const applicationManager=createApplicationManager({readyGuild,state:store.applicationRooms,getChannelWriteRest:()=>applicationMutationRest});
   const lxrApply=createLxrApply({readyGuild,receipts:store.applications,
-    openTicket:createApplicationTickets({readyGuild,getChannelWriteRest:()=>applicationChannelRest})});
+    openTicket:createApplicationTickets({readyGuild,getChannelWriteRest:()=>applicationChannelRest,managementState:store.applicationRooms})});
   let lxrApplyReady=false;
   const syncLxrApply=()=>{
     if (!lxrApplyReady && client?.isReady()) void lxrApply.publish().then(()=>{lxrApplyReady=true;})
@@ -96,7 +97,7 @@ function connectDiscord(store, env) {
   };
   const onMessage=createMessageHandler({authorize:community.dashboard,service,store,publicOrigin:env.PUBLIC_ORIGIN,run,parse:parseChat,shortcuts,
     ticketMessages:tickets.text,assertGenericChannel:gateway.assertGenericChannel,
-    applicationResetContext:context,resetApplication:lxrApply.reset});
+    applicationResetContext:context,resetApplication:lxrApply.reset,applicationTicketMessages:applicationManager.text});
   const voice=createVoiceActivity(store.community);
   let voiceTimer;
   let dailyTopTimer;
@@ -130,6 +131,7 @@ function connectDiscord(store, env) {
       applicationChannelRest=new api.REST({version:'10',retries:0}).setToken(token);
       applicationChannelRest.clearHashSweeper();
       applicationChannelRest.clearHandlerSweeper();
+      applicationMutationRest=createApplicationMutationRest(token);
       const flags=BigInt(app.flags || 0);
       const intents=[api.GatewayIntentBits.Guilds,api.GatewayIntentBits.GuildMessages,api.GatewayIntentBits.DirectMessages,api.GatewayIntentBits.GuildVoiceStates];
       const contentEnabled=Boolean(flags & ((1n<<18n)|(1n<<19n)));
@@ -162,15 +164,18 @@ function connectDiscord(store, env) {
         }
         if (i.guildId!==catalog.guildId || (i.isChatInputCommand() && i.commandGuildId!==catalog.guildId)) return;
         if (await lxrApply.handle(i)) return;
+        if (await applicationManager.interaction(i)) return;
         try { await gateway.assertGenericChannel(i.channelId,{useCache:true}); }
         catch {
-          if (i.isChatInputCommand()) await i.reply({content:'الأوامر العامة غير متاحة في روم التقديم هذا.',flags:api.MessageFlags.Ephemeral,allowedMentions:{parse:[]}}).catch(()=>{});
+          const payload={content:'الأوامر العامة غير متاحة في روم التقديم هذا.',allowedMentions:{parse:[]}};
+          if (i.deferred) await i.editReply(payload).catch(()=>{});
+          else if (i.isChatInputCommand()) await i.reply({...payload,flags:api.MessageFlags.Ephemeral}).catch(()=>{});
           return;
         }
         if (await lxrStart.handle(i) || await tickets.interaction(i) || await games.handle(i)) return;
         if (!i.isChatInputCommand() || !commands.some(c=>c.name===i.commandName)) return;
         try {
-          await i.deferReply({flags:api.MessageFlags.Ephemeral});
+          if (!i.deferred) await i.deferReply({flags:api.MessageFlags.Ephemeral});
           const output=await run({...interactionInput(i),originChannel:i.channelId});
           await i.editReply({...(typeof output==='string'?{content:output}:output),allowedMentions:{parse:[]}});
         } catch(err) {
