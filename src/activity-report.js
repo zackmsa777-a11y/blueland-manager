@@ -3,7 +3,7 @@
 const {ChannelType}=require('discord.js');
 const {catalog}=require('./ladder');
 const {topReply}=require('./activity-top');
-const CHANNEL='1574014041377083492';
+const CHANNEL='1575140485884936274';
 const COMMAND='توب يومي';
 const ALLOWED_MENTIONS={parse:[],repliedUser:false};
 const DAY=86_400_000, MINUTE=60_000;

@@ -5,7 +5,7 @@ const {ChannelType,Client,MessagePayload}=require('discord.js');
 const {openStore}=require('../src/store');
 const {catalog}=require('../src/ladder');
 const {createDailyTopReport}=require('../src/activity-report');
-const channelId='1574014041377083492';
+const channelId='1575140485884936274';
 const member='200000000000000001', posted='200000000000000002';
 const t=time=>Date.parse(time+'Z');
 function setup(ctx) {
