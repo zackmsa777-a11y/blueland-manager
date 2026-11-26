@@ -490,6 +490,31 @@ for (const [label,inventory] of [
   assert.equal(posts(f).length,0);
 });
 
+const newGuildChannel=overrides=>({id:FOREIGN,type:20,guild_id:GUILD,...overrides});
+for (const kind of ['staff','transfer','girls']) test(`an unrelated Discord channel of unrecognized type does not block ${kind} delivery or recovery`,async()=>{
+  const f=fixture({kind});
+  f.channels.push(newGuildChannel());
+  assert.equal(await f.deliver(request(kind,{freshReservation:true})),ROOM);
+  assert.equal(posts(f).length,2);
+  const start=f.events.length;
+  assert.equal(await f.deliver.recover(recovery(kind)),ROOM);
+  assert.ok(f.events.slice(start).every(([method])=>method==='GET'));
+  assert.equal(sends(f).length,1);
+});
+
+for (const [label,rows] of [
+  ['matching topic',[newGuildChannel({topic:marker})]],
+  ['missing guild',[newGuildChannel({guild_id:undefined})]],
+  ['wrong guild',[newGuildChannel({guild_id:ROOM})]],
+  ['malformed topic',[newGuildChannel({topic:20})]],
+  ['duplicate ID',[newGuildChannel(),{id:FOREIGN,type:ChannelType.GuildText}]],
+  ['negative type',[newGuildChannel({type:-1})]],
+]) test(`unrecognized channel with ${label} does not authorize a write or release the reservation`,async()=>{
+  const f=fixture();f.channels.push(...rows);
+  await assert.rejects(f.deliver(fresh()),error=>unsafeRejection(error) && /room inventory unavailable/.test(error.message));
+  assert.equal(posts(f).length,0);
+});
+
 for (const options of [{missingWriter:true},{writerRetries:1}]) test(`create rejects ${options.missingWriter?'missing':'retrying'} dedicated REST without fallback`,async()=>{
   const f=fixture(options);
   await assert.rejects(f.deliver(fresh()),safeRejection);

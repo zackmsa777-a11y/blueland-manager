@@ -122,9 +122,13 @@ async function locateRoom(rest,topic) {
   const seen=new Set();
   let match;
   for (const room of rooms) {
-    if (!snowflake(room?.id) || !Number.isSafeInteger(room.type) || !ChannelType[room.type]?.startsWith('Guild') ||
+    if (!snowflake(room?.id) || !Number.isSafeInteger(room.type) || room.type<0 ||
         (room.guild_id!==undefined && room.guild_id!==GUILD) ||
         (room.topic!=null && typeof room.topic!=='string') || seen.has(room.id)) invalid();
+    const typeName=ChannelType[room.type];
+    // An unrelated future channel type may be listed before discord.js knows it.
+    // It must belong to this guild and must never stand in for the requested room.
+    if (!typeName?.startsWith('Guild') && !(typeName===undefined && room.guild_id===GUILD && room.topic!==topic)) invalid();
     seen.add(room.id);
     if (room.topic!==topic) continue;
     if (match!==undefined) throw new RoomInventoryError('LXR application: ambiguous room marker');
