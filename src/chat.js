@@ -12,13 +12,17 @@ const {autoReply,roleAutoReply,salamReply}=require('../config/discord-features.j
 const {createDashImageLoader}=require('./dash-image');
 const {createAcceptMember}=require('./accept-member');
 
-function createMessageHandler({ authorize, service, store, publicOrigin, run, parse, shortcuts, ticketMessages, acceptOverwrites,
+function createMessageHandler({ authorize, service, store, publicOrigin, run, parse, shortcuts, ticketMessages, acceptOverwrites, assertGenericChannel,
   loadDashImage=createDashImageLoader() }) {
   const acceptMember=createAcceptMember({store,overwrites:acceptOverwrites});
   return async function onMessage(message) {
     if (message.author.bot || message.webhookId) return;
     const inGuild=message.inGuild();
     if (inGuild && message.guildId!==catalog.guildId) return;
+    // Do not pass applicant text to any generic path, even if channel metadata is unavailable.
+    if (inGuild && assertGenericChannel) {
+      try { await assertGenericChannel(message.channelId,{useCache:true}); } catch { return; }
+    }
     const text = message.content?.trim() || '';
     const reply = output => message.reply({...(typeof output==='string'?{content:output}:output),allowedMentions:{parse:[],repliedUser:false}});
     const greeting=salamReply && isSalamGreeting(text);

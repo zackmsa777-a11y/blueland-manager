@@ -12,9 +12,11 @@ const {createDailyTopReport}=require('./activity-report');
 const { createDiscordGames } = require('./discord-games');
 const { createShortcutHandler } = require('./shortcut-dispatch');
 const { createLxrStart } = require('./lxr-start');
+const { createLxrApply } = require('./lxr-apply');
+const { createApplicationTickets } = require('./lxr-apply-tickets');
 
 function connectDiscord(store, env) {
-  let client, api, timer, recovering = false, cachedDirectory, refresh, validUntil = 0, attemptedToken;
+  let client, api, timer, applicationChannelRest, recovering = false, cachedDirectory, refresh, validUntil = 0, attemptedToken;
   let connection = { code: 'offline', text: 'بانتظار ربط البوت' };
   const allowed = new Set((env.PROMOTER_ROLE_IDS || '').split(',').map(s => s.trim()).filter(Boolean));
   const botId = env.DISCORD_APPLICATION_ID || catalog.botId;
@@ -80,12 +82,20 @@ function connectDiscord(store, env) {
     lookupTicket:channel=>store.community.ticketByChannel(channel)});
   const tickets=require('./discord-tickets').createDiscordTickets({db:store.community,community,readyGuild});
   const lxrStart=createLxrStart({readyGuild});
+  const lxrApply=createLxrApply({readyGuild,receipts:store.applications,
+    openTicket:createApplicationTickets({readyGuild,getChannelWriteRest:()=>applicationChannelRest})});
+  let lxrApplyReady=false;
+  const syncLxrApply=()=>{
+    if (!lxrApplyReady && client?.isReady()) void lxrApply.publish().then(()=>{lxrApplyReady=true;})
+      .catch(err=>console.warn('LXR application panel:',err.code || err.name));
+  };
   let lxrStartReady=false;
   const syncLxrStart=()=>{
     if (!lxrStartReady && client?.isReady()) void lxrStart.publish().then(()=>{lxrStartReady=true;})
       .catch(err=>console.warn('LXR start panel:',err.code || err.message));
   };
-  const onMessage=createMessageHandler({authorize:community.dashboard,service,store,publicOrigin:env.PUBLIC_ORIGIN,run,parse:parseChat,shortcuts,ticketMessages:tickets.text});
+  const onMessage=createMessageHandler({authorize:community.dashboard,service,store,publicOrigin:env.PUBLIC_ORIGIN,run,parse:parseChat,shortcuts,
+    ticketMessages:tickets.text,assertGenericChannel:gateway.assertGenericChannel});
   const voice=createVoiceActivity(store.community);
   let voiceTimer;
   let dailyTopTimer;
@@ -115,6 +125,10 @@ function connectDiscord(store, env) {
       const rest=new api.REST({version:'10'}).setToken(token);
       const app=await rest.get(api.Routes.oauth2CurrentApplication());
       if (app.id!==botId) throw new RuleError('التوكن يخص تطبيق ديسكورد مختلفًا.');
+      // Channel creation has no nonce. Do not automatically replay a possibly committed POST.
+      applicationChannelRest=new api.REST({version:'10',retries:0}).setToken(token);
+      applicationChannelRest.clearHashSweeper();
+      applicationChannelRest.clearHandlerSweeper();
       const flags=BigInt(app.flags || 0);
       const intents=[api.GatewayIntentBits.Guilds,api.GatewayIntentBits.GuildMessages,api.GatewayIntentBits.DirectMessages,api.GatewayIntentBits.GuildVoiceStates];
       const contentEnabled=Boolean(flags & ((1n<<18n)|(1n<<19n)));
@@ -146,11 +160,17 @@ function connectDiscord(store, env) {
           return;
         }
         if (i.guildId!==catalog.guildId || (i.isChatInputCommand() && i.commandGuildId!==catalog.guildId)) return;
+        if (await lxrApply.handle(i)) return;
+        try { await gateway.assertGenericChannel(i.channelId,{useCache:true}); }
+        catch {
+          if (i.isChatInputCommand()) await i.reply({content:'الأوامر العامة غير متاحة في روم التقديم هذا.',flags:api.MessageFlags.Ephemeral,allowedMentions:{parse:[]}}).catch(()=>{});
+          return;
+        }
         if (await lxrStart.handle(i) || await tickets.interaction(i) || await games.handle(i)) return;
         if (!i.isChatInputCommand() || !commands.some(c=>c.name===i.commandName)) return;
         try {
           await i.deferReply({flags:api.MessageFlags.Ephemeral});
-          const output=await run(interactionInput(i));
+          const output=await run({...interactionInput(i),originChannel:i.channelId});
           await i.editReply({...(typeof output==='string'?{content:output}:output),allowedMentions:{parse:[]}});
         } catch(err) {
           const msg=err instanceof RuleError?err.message:'تعذّر إتمام الأمر. راجع صلاحيات البوت وحالة الاتصال.';
@@ -161,7 +181,11 @@ function connectDiscord(store, env) {
         if (m.guild.id!==catalog.guildId || m.user.bot) return;
         const id=store.community.settings().welcomeChannel;
         if (!id) return;
-        try { const room=await m.guild.channels.fetch(id); if (room?.isTextBased()) await room.send({content:'أهلًا <@'+m.id+'> في BlueLand Empire!',allowedMentions:{parse:[]}}); } catch {}
+        try {
+          await gateway.assertGenericChannel(id);
+          const room=await m.guild.channels.fetch(id);
+          if (room?.isTextBased()) await room.send({content:'أهلًا <@'+m.id+'> في BlueLand Empire!',allowedMentions:{parse:[]}});
+        } catch {}
       });
       client.on(api.Events.ClientReady, () => {
         if (client.user.id !== botId) {
@@ -174,8 +198,9 @@ function connectDiscord(store, env) {
         sync().catch(()=>{});
         void syncTickets();
         syncLxrStart();
+        syncLxrApply();
         clearInterval(timer);
-        timer = setInterval(() => { recover().catch(() => {}); sync().catch(()=>{}); void syncTickets(); syncLxrStart(); }, 60_000);
+        timer = setInterval(() => { recover().catch(() => {}); sync().catch(()=>{}); void syncTickets(); syncLxrStart(); syncLxrApply(); }, 60_000);
         timer.unref();
         const checkpoint=()=>{
           const guild=client.isReady()?client.guilds.cache.get(catalog.guildId):null;
@@ -202,6 +227,7 @@ function connectDiscord(store, env) {
       clearInterval(dailyTopTimer);
       voice.reset();
       client?.destroy();
+      applicationChannelRest=undefined;
       let message = 'تعذّر اتصال البوت. راجع التوكن والاتصال بديسكورد.';
       if (err instanceof RuleError) message=err.message;
       if (err.code === 'MODULE_NOT_FOUND') message = 'ثبّت مكتبات البوت بتشغيل npm ci داخل المشروع.';
@@ -240,13 +266,14 @@ function connectDiscord(store, env) {
       clearInterval(timer);
       await client?.destroy();
       client=undefined;
+      applicationChannelRest=undefined;
       connection={code:'offline',text:'بانتظار ربط البوت'};
       env.DISCORD_BOT_TOKEN=config.DISCORD_BOT_TOKEN;
       return start();
     }
   }
   return { start, loadLocalConfig, status, authorize, dashboardAccess:community.dashboard, service, community, destinations:gateway.destinations, directory,
-    close() { clearInterval(timer); client?.destroy(); } };
+    close() { clearInterval(timer); applicationChannelRest=undefined; client?.destroy(); } };
 }
 
 module.exports = { connectDiscord };

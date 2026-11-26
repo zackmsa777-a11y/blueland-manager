@@ -66,15 +66,19 @@ function createCommunity(store, gateway, promotions) {
     if (!channelAction && !['unban','warnings'].includes(action)) verifyTarget(ctx);
     return ctx;
   }
-  async function moderate({delivery,actor,action,target,channel,reason,minutes,caseId,created=Date.now()}) {
+  async function moderate({delivery,actor,action,target,channel,originChannel,reason,minutes,caseId,created=Date.now()}) {
     snowflake(actor);
     const roomAction=['lock','unlock','mute','unmute'].includes(action);
     if (roomAction) snowflake(channel);
     if (action==='lock' || action==='unlock') target=channel;
     snowflake(target);
-    const why=value(String(reason ?? '').trim() || 'بأمر المسؤول',350);
     return exclusive('mod:'+target,async()=>{
       const ctx=await moderator(actor,action,target);
+      // A room argument must not override the location where the command was invoked.
+      for (const id of new Set([originChannel,channel])) {
+        if (id!==null && id!==undefined) await gateway.assertGenericChannel?.(id);
+      }
+      const why=value(String(reason ?? '').trim() || 'بأمر المسؤول',350);
       if (action==='warnings') return db.cases(target).filter(row=>row.action==='warn' && !row.revoked);
       const replay=db.fromEvent(delivery);
       if (replay) return replay;
@@ -188,7 +192,9 @@ function createCommunity(store, gateway, promotions) {
       const body=kind==='legacy'?'':value(details,750);
       const previous=db.activeTicket(actor);
       if (previous?.channel && gateway.ticketPresent && !await gateway.ticketPresent(previous.channel)) db.ticketRemoved(previous.channel);
-      return finishTicket(db.reserveTicket(delivery,actor,text,kind,body));
+      const reservation=db.reserveTicket(delivery,actor,text,kind,body);
+      if (reservation.channel) await gateway.assertGenericChannel?.(reservation.channel);
+      return finishTicket(reservation);
     });
   }
   async function ticketStaff(actor,row) {
@@ -242,6 +248,8 @@ function createCommunity(store, gateway, promotions) {
     if (!row) throw new RuleError('التذكرة غير موجودة.',404);
     const ctx=action==='close' && actor===row.owner ? null : await ticketStaff(actor,row);
     return exclusive('ticket:'+row.owner,async()=>{
+      const channel=db.ticket(row.id)?.channel;
+      if (channel) await gateway.assertGenericChannel?.(channel);
       const pending=db.claimChange(row.id);
       if (action==='unclaim' && pending && !pending.synced && pending.member===actor) {
         if (!pending.restoring) db.undoClaim(row.id);
@@ -305,6 +313,7 @@ function createCommunity(store, gateway, promotions) {
       if (ticket.assignee && ticket.assignee!==actor && !permits(ctx,ctx.actor,0n))
         throw new RuleError('إدارة التذكرة بعد استلامها للمستلم أو Administrator.',403);
       if (!ticket.channel || !['open','closed'].includes(ticket.state)) throw new RuleError('التذكرة غير متاحة الآن.',409);
+      await gateway.assertGenericChannel?.(ticket.channel);
       if (action==='check-delete') return;
       if (action==='rename' || action==='delete') {
         await gateway.editTicketRoom(ticket,action,target);

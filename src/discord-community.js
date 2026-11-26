@@ -3,12 +3,37 @@
 const {ChannelType,PermissionFlagsBits:P,Routes,OverwriteType} = require('discord.js');
 const {catalog,RuleError} = require('./ladder');
 const ui=require('./ticket-ui');
+const {isApplicationDestination}=require('./lxr-apply-tickets');
 
 const writing = P.SendMessages | P.SendMessagesInThreads | P.CreatePublicThreads | P.CreatePrivateThreads;
 const ticketRead = P.ViewChannel | P.ReadMessageHistory;
 const ticketWrite = P.SendMessages | P.AttachFiles | P.EmbedLinks;
 const roomTypes = [ChannelType.GuildText,ChannelType.GuildAnnouncement];
+const threadTypes = [ChannelType.AnnouncementThread,ChannelType.PublicThread,ChannelType.PrivateThread];
+const applicationCategoryNames=new Set(['تقديم اداره','تقديم الاداره','تقديم اداره بنات','تقديم اداره البنات','نقل رتب','نقل الرتب']);
 const helperIds=new Set(catalog.roles.filter(r=>r.kind==='permission').map(r=>r.id));
+function applicationDestination(channel) {
+  if (isApplicationDestination(channel)) return true;
+  const name=channel?.type===ChannelType.GuildCategory && channel.name?.normalize('NFKC')
+    .replace(/[\p{M}\p{Cf}\u0640]/gu,'').replace(/[أإآٱ]/gu,'ا').replace(/ة/gu,'ه').trim().replace(/\s+/gu,' ');
+  return applicationCategoryNames.has(name);
+}
+const isChannelId=id=>typeof id==='string' && /^[1-9]\d{16,19}$/u.test(id);
+const scopeUnknown=()=>new RuleError('تعذّر التحقق من نطاق القناة في ديسكورد.',503);
+async function applicationScope(id,findChannel) {
+  for (let depth=0;depth<3;depth++) {
+    if (!isChannelId(id)) throw scopeUnknown();
+    if (applicationDestination({id})) return true;
+    const channel=await findChannel(id);
+    if (!channel || typeof channel.type!=='number') throw scopeUnknown();
+    if (applicationDestination(channel)) return true;
+    if (channel.type===ChannelType.GuildCategory) return false;
+    const parent=channel.parentId ?? channel.parent_id;
+    if (!parent && !threadTypes.includes(channel.type)) return false;
+    id=parent;
+  }
+  throw scopeUnknown();
+}
 function discordFailure(err) {
   if (err instanceof RuleError) throw err;
   if ([50013,50001].includes(err.code)) throw new RuleError('ديسكورد رفض الإجراء. راجع صلاحيات البوت وترتيب روله في هذه القناة.',403);
@@ -20,16 +45,43 @@ function communityGateway(readyGuild,context) {
   async function getChannel(id) {
     const guild=readyGuild();
     try {
-      const result=await guild.channels.fetch(id,{force:true});
-      if (!result || result.guildId!==guild.id) throw new RuleError('القناة غير موجودة في BlueLand.',404);
+      // In discord.js 14.28.1, cache:false leaves an existing channel's fields stale even with force:true.
+      const result=await guild.channels.fetch(id,{force:true,cache:true});
+      if (!result || result.guildId!==guild.id || (result.id && result.id!==id)) throw new RuleError('القناة غير موجودة في BlueLand.',404);
       return result;
     } catch(err) { discordFailure(err); }
   }
+  async function assertGenericScope(id,findChannel) {
+    if (await applicationScope(id,findChannel)) throw new RuleError('هذا الإجراء العام غير متاح داخل أقسام التقديم.',403);
+  }
+  async function assertGenericChannel(id,{useCache=false}={}) {
+    const guild=readyGuild();
+    const find=async key=>{
+      if (!useCache) return getChannel(key);
+      const cached=guild.channels.cache.get(key);
+      if (cached?.id===key && cached.guildId===guild.id && !cached.partial) return cached;
+      // Resolve unknown channels/ancestors without storing a stale negative decision or reading history.
+      try {
+        const read=await guild.client.rest.get(Routes.channel(key),{signal:AbortSignal.timeout(8_000)});
+        if (read?.id===key && read.guild_id===guild.id) return read;
+      } catch {}
+      throw scopeUnknown();
+    };
+    await assertGenericScope(id,find);
+  }
+  async function assertGenericRoom(id,room) {
+    await assertGenericScope(id,key=>key===id?room:getChannel(key));
+  }
   async function validateSettings(settings) {
-    if (settings.ticketCategory && (await getChannel(settings.ticketCategory)).type!==ChannelType.GuildCategory) throw new RuleError('اختر فئة لقنوات التذاكر.');
+    if (settings.ticketCategory) {
+      const category=await getChannel(settings.ticketCategory);
+      if (category.type!==ChannelType.GuildCategory) throw new RuleError('اختر فئة لقنوات الدعم، خارج أقسام التقديم.');
+      await assertGenericRoom(settings.ticketCategory,category);
+    }
     if (settings.welcomeChannel) {
       const c=await getChannel(settings.welcomeChannel);
-      if (!roomTypes.includes(c.type) || !c.permissionsFor(c.guild.members.me)?.has([P.ViewChannel,P.SendMessages])) throw new RuleError('اختر قناة نصية يستطيع البوت الإرسال فيها.');
+      await assertGenericRoom(settings.welcomeChannel,c);
+      if (!roomTypes.includes(c.type) || !c.permissionsFor(c.guild.members.me)?.has([P.ViewChannel,P.SendMessages])) throw new RuleError('اختر قناة نصية يستطيع البوت الإرسال فيها، خارج تكتات التقديم.');
     }
     if (settings.supportRole) {
       const g=readyGuild(), r=await g.roles.fetch(settings.supportRole).catch(()=>null);
@@ -52,6 +104,7 @@ function communityGateway(readyGuild,context) {
   async function roomPermission({ctx,action,channel,target,db,reason}) {
     try {
       const c=await getChannel(channel);
+      await assertGenericRoom(channel,c);
       if (!roomTypes.includes(c.type)) throw new RuleError('هذا الأمر يعمل في روم كتابي عادي أو روم إعلانات.');
       const byMember=action==='mute' || action==='unmute';
       const principal=byMember?target:c.guildId;
@@ -110,6 +163,7 @@ function communityGateway(readyGuild,context) {
           topic:marker+'\n'+(typed?ui.kinds[row.kind]:row.subject),permissionOverwrites:overwrites,reason:'BlueLand support ticket '+row.id});
       }
       room=await getChannel(room.id);
+      await assertGenericRoom(room.id,room);
       verifyStaffComplaint(room,row);
       const overwrites=room.permissionOverwrites.cache;
       const privacy=room.topic?.split('\n')[0]===marker && overwrites.get(guild.id)?.deny.has(P.ViewChannel) && overwrites.get(row.owner)?.allow.has(P.ViewChannel);
@@ -154,6 +208,7 @@ function communityGateway(readyGuild,context) {
   }
   async function verifiedTicket(row) {
     const c=await getChannel(row.channel);
+    await assertGenericRoom(row.channel,c);
     if (c.type!==ChannelType.GuildText || c.topic?.split('\n')[0]!==ui.marker(row)) {
       throw new RuleError('هوية قناة التذكرة لا تطابق السجل.',409);
     }
@@ -305,13 +360,19 @@ function communityGateway(readyGuild,context) {
   }
   async function destinations() {
     const list=await readyGuild().channels.fetch();
-    return [...list.values()].filter(c=>c && (roomTypes.includes(c.type) || c.type===ChannelType.GuildCategory) &&
-      !(/^BlueLand ticket \d+ • \d{17,20}\n/u.test(c.topic || '') && c.topic.split('\n')[1]===ui.kinds['staff-complaint']))
-      .map(c=>({id:c.id,name:c.name,category:c.type===ChannelType.GuildCategory})).sort((a,b)=>a.name.localeCompare(b.name,'ar'));
+    const result=[];
+    for (const c of list.values()) {
+      if (!c || !(roomTypes.includes(c.type) || c.type===ChannelType.GuildCategory) ||
+          (/^BlueLand ticket \d+ • \d{17,20}\n/u.test(c.topic || '') && c.topic.split('\n')[1]===ui.kinds['staff-complaint'])) continue;
+      // The bulk guild response includes categories. Do not expose unresolved descendants.
+      try { if (await applicationScope(c.id,id=>list.get(id))) continue; } catch { continue; }
+      result.push({id:c.id,name:c.name,category:c.type===ChannelType.GuildCategory});
+    }
+    return result.sort((a,b)=>a.name.localeCompare(b.name,'ar'));
   }
   async function ticketPresent(id) {
     try { await getChannel(id); return true; } catch(err) { if (err instanceof RuleError && err.status===404) return false; throw err; }
   }
-  return {context,memberAction,roomPermission,ticketRoom,ticketWriting,ticketPresent,syncClaim,announceClaim,editTicketRoom,validateSettings,destinations};
+  return {context,assertGenericChannel,memberAction,roomPermission,ticketRoom,ticketWriting,ticketPresent,syncClaim,announceClaim,editTicketRoom,validateSettings,destinations};
 }
 module.exports={communityGateway};

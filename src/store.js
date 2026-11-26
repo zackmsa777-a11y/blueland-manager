@@ -21,6 +21,10 @@ function openStore(file) {
     );
     CREATE UNIQUE INDEX IF NOT EXISTS one_pending_per_member ON promotions(target) WHERE state='pending';
     CREATE TABLE IF NOT EXISTS access (hash TEXT PRIMARY KEY, kind TEXT NOT NULL, actor TEXT NOT NULL, until INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS lxr_application_delivery (
+      user_id TEXT PRIMARY KEY, request_id TEXT NOT NULL UNIQUE,
+      kind TEXT NOT NULL CHECK(kind IN ('staff','girls','transfer'))
+    );
     CREATE TABLE IF NOT EXISTS accept_member_outbox (
       target TEXT PRIMARY KEY, channel TEXT NOT NULL, reference TEXT NOT NULL,
       confirmed INTEGER NOT NULL DEFAULT 0, attempted INTEGER, posted TEXT,
@@ -48,6 +52,17 @@ function openStore(file) {
     return code;
   }
   return {
+    applications:{
+      find(userId) {
+        return db.prepare('SELECT request_id AS id,user_id AS userId,kind FROM lxr_application_delivery WHERE user_id=?').get(userId);
+      },
+      claim({id,userId,kind}) {
+        return db.prepare('INSERT OR IGNORE INTO lxr_application_delivery(user_id,request_id,kind) VALUES(?,?,?)').run(userId,id,kind).changes===1;
+      },
+      clear({id,userId,kind}) {
+        db.prepare('DELETE FROM lxr_application_delivery WHERE user_id=? AND request_id=? AND kind=?').run(userId,id,kind);
+      }
+    },
     acceptance:{
       byTarget:acceptanceByTarget,
       begin(target,channel,reference) {
