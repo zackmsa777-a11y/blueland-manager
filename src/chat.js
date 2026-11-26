@@ -10,9 +10,11 @@ function isSalamGreeting(text) {
 
 const {autoReply,roleAutoReply,salamReply}=require('../config/discord-features.json');
 const {createDashImageLoader}=require('./dash-image');
+const {createAcceptMember}=require('./accept-member');
 
-function createMessageHandler({ authorize, service, store, publicOrigin, run, parse, shortcuts, ticketMessages,
+function createMessageHandler({ authorize, service, store, publicOrigin, run, parse, shortcuts, ticketMessages, acceptOverwrites,
   loadDashImage=createDashImageLoader() }) {
+  const acceptMember=createAcceptMember({store,overwrites:acceptOverwrites});
   return async function onMessage(message) {
     if (message.author.bot || message.webhookId) return;
     const inGuild=message.inGuild();
@@ -38,6 +40,7 @@ function createMessageHandler({ authorize, service, store, publicOrigin, run, pa
         await reply('أرسلت لك نقاط التذاكر في الخاص.');
         return;
       }
+      if (await acceptMember(message,text)) return;
       if (ticketMessages && await ticketMessages(message,text)) return;
       if (run && parse && /^\+?(?:توب|top)(?:\s|$)/iu.test(text)) {
         const top=parse(text);

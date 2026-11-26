@@ -75,8 +75,20 @@ function checkPlan(ctx, plan, allowed, ticketReward=false) {
   }
 }
 
+const memberMutations=new WeakMap();
+function mutateMember(store,target,work,{key,busy}={}) {
+  if (!memberMutations.has(store)) memberMutations.set(store,new Map());
+  const active=memberMutations.get(store), running=active.get(target);
+  if (running) {
+    if (key && running.key && key.every((value,i)=>value===running.key[i])) return running.promise;
+    return Promise.reject(new RuleError(busy || 'يجري تعديل رتب هذا العضو. انتظر اكتمال العملية.',409));
+  }
+  const promise=Promise.resolve().then(work).finally(()=>active.delete(target));
+  active.set(target,{key,promise});
+  return promise;
+}
+
 function makeService(store, gateway, allowed = new Set()) {
-  const active = new Map();
   async function preview(actor, target) {
     const ctx = await gateway.context(actor, target);
     checkOperator(ctx, allowed);
@@ -140,14 +152,11 @@ function makeService(store, gateway, allowed = new Set()) {
   function execute(request) {
     const direction = request.direction ?? 'promote';
     const count = request.count ?? 1;
-    const running = active.get(request.target);
-    if (running) {
-      if (running.id === request.id && running.actor === request.actor && running.direction === direction && running.count === count) return running.promise;
-      return Promise.reject(new RuleError('يجري تنفيذ ترقية لهذا العضو. انتظر اكتمالها.', 409));
-    }
-    const promise = perform({ ...request, direction, count }).finally(() => active.delete(request.target));
-    active.set(request.target, { id: request.id, actor: request.actor, direction, count, promise });
-    return promise;
+    // Preserve the existing coalescing key and snapshot the request before yielding.
+    const key=[request.id,request.actor,direction,count];
+    const pendingRequest={...request,direction,count};
+    return mutateMember(store,request.target,()=>perform(pendingRequest),{key,
+      busy:'يجري تنفيذ ترقية لهذا العضو. انتظر اكتمالها.'});
   }
   async function recover() {
     for (const entry of store.unfinished()) {
@@ -157,4 +166,4 @@ function makeService(store, gateway, allowed = new Set()) {
   }
   return { preview, execute, recover, checkOperator: ctx => checkOperator(ctx, allowed) };
 }
-module.exports = { makeService, checkOperator, memberAccess, canDemote };
+module.exports = { makeService, checkOperator, memberAccess, canDemote, mutateMember };

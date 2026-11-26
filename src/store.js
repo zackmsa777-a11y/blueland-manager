@@ -21,13 +21,26 @@ function openStore(file) {
     );
     CREATE UNIQUE INDEX IF NOT EXISTS one_pending_per_member ON promotions(target) WHERE state='pending';
     CREATE TABLE IF NOT EXISTS access (hash TEXT PRIMARY KEY, kind TEXT NOT NULL, actor TEXT NOT NULL, until INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS accept_member_outbox (
+      target TEXT PRIMARY KEY, channel TEXT NOT NULL, reference TEXT NOT NULL,
+      confirmed INTEGER NOT NULL DEFAULT 0, attempted INTEGER, posted TEXT,
+      dead_reference INTEGER NOT NULL DEFAULT 0
+    );
   `);
+  if (!db.prepare('PRAGMA table_info(accept_member_outbox)').all().some(column=>column.name==='dead_reference')) {
+    // Older builds cleared timestamps for unclassified 4xx responses. Treat those as receipt-only.
+    db.exec(`BEGIN IMMEDIATE;
+      ALTER TABLE accept_member_outbox ADD COLUMN dead_reference INTEGER NOT NULL DEFAULT 0;
+      UPDATE accept_member_outbox SET attempted=0 WHERE confirmed=1 AND attempted IS NULL AND posted IS NULL;
+      COMMIT;`);
+  }
   function hydrate(row) {
     return row ? { ...row, plan: JSON.parse(row.plan) } : null;
   }
   function byId(id) {
     return hydrate(db.prepare('SELECT * FROM promotions WHERE id=?').get(id));
   }
+  const acceptanceByTarget=target=>db.prepare('SELECT * FROM accept_member_outbox WHERE target=?').get(target);
   function issue(kind, actor, duration) {
     db.prepare('DELETE FROM access WHERE until <= ?').run(Date.now());
     const code = randomBytes(kind === 'session' ? 32 : 12).toString('hex');
@@ -35,6 +48,33 @@ function openStore(file) {
     return code;
   }
   return {
+    acceptance:{
+      byTarget:acceptanceByTarget,
+      begin(target,channel,reference) {
+        db.prepare('INSERT OR IGNORE INTO accept_member_outbox (target,channel,reference) VALUES (?,?,?)').run(target,channel,reference);
+        return acceptanceByTarget(target);
+      },
+      markAttempt(target,reference,attempted) {
+        db.prepare('UPDATE accept_member_outbox SET confirmed=1, attempted=COALESCE(attempted,?) WHERE target=? AND reference=? AND dead_reference=0')
+          .run(attempted,target,reference);
+      },
+      rejectAttempt(target,reference,attempted,dead) {
+        db.prepare(`UPDATE accept_member_outbox SET attempted=NULL, dead_reference=?
+          WHERE target=? AND reference=? AND attempted=? AND posted IS NULL AND dead_reference=0`)
+          .run(Number(dead),target,reference,attempted);
+      },
+      rebind(target,previous,channel,reference) {
+        return db.prepare(`UPDATE accept_member_outbox SET channel=?, reference=?, dead_reference=0
+          WHERE target=? AND reference=? AND confirmed=1 AND attempted IS NULL AND posted IS NULL AND dead_reference=1
+          RETURNING *`).get(channel,reference,target,previous);
+      },
+      markPosted(target,reference,posted) {
+        db.prepare('UPDATE accept_member_outbox SET posted=? WHERE target=? AND reference=?').run(posted,target,reference);
+      },
+      complete(target,reference) {
+        db.prepare('DELETE FROM accept_member_outbox WHERE target=? AND reference=?').run(target,reference);
+      }
+    },
     community: openCommunityStore(db),
     shortcuts: require('./custom-shortcuts').openShortcuts(db),
     roulette: require('./roulette-shop').openRouletteShop(db),
