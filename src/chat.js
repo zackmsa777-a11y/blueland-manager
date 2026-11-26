@@ -9,8 +9,10 @@ function isSalamGreeting(text) {
 }
 
 const {autoReply,roleAutoReply,salamReply}=require('../config/discord-features.json');
+const {createDashImageLoader}=require('./dash-image');
 
-function createMessageHandler({ authorize, service, store, publicOrigin, run, parse, shortcuts, ticketMessages }) {
+function createMessageHandler({ authorize, service, store, publicOrigin, run, parse, shortcuts, ticketMessages,
+  loadDashImage=createDashImageLoader() }) {
   return async function onMessage(message) {
     if (message.author.bot || message.webhookId) return;
     const inGuild=message.inGuild();
@@ -52,16 +54,22 @@ function createMessageHandler({ authorize, service, store, publicOrigin, run, pa
         }
         return;
       }
-      if (autoReply?.trigger === text && Array.isArray(autoReply.authors) &&
-          autoReply.authors.includes(message.author.id) && !message.attachments?.size && !message.stickers?.size) {
-        try {
-          const posted = await message.channel.send({content:autoReply.content, allowedMentions:{parse:[]}});
-          const confirmed = await message.channel.messages.fetch({message:posted.id, force:true, cache:false});
-          if (confirmed?.id === posted.id) await message.delete();
-        } catch (err) {
-          console.warn('BlueLand auto-reply could not finish:', err.code || err.name);
+      if (autoReply?.trigger === text && !message.attachments?.size && !message.stickers?.size) {
+        const trusted=autoReply.authors.includes(message.author.id);
+        const member=trusted?null:await message.guild?.members.fetch({user:message.author.id,force:true,cache:false}).catch(()=>null);
+        if (trusted || member?.roles.cache.has(autoReply.roleId)) {
+          try {
+            const file=await loadDashImage(message.client);
+            const posted=await message.channel.send({files:[file],allowedMentions:{parse:[]}});
+            const confirmed=await message.channel.messages.fetch({message:posted.id,force:true,cache:false});
+            if (confirmed?.id===posted.id && [...(confirmed.attachments?.values() || [])].some(a=>a.name===file.name && a.size===file.attachment.length)) {
+              await message.delete();
+            }
+          } catch (err) {
+            console.warn('BlueLand auto-reply could not finish:',err.code || err.name);
+          }
+          return;
         }
-        return;
       }
       if (!text.startsWith('+')) {
         if (shortcuts && await shortcuts(message,text)) return;
