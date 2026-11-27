@@ -14,9 +14,10 @@ const { createShortcutHandler } = require('./shortcut-dispatch');
 const { createLxrStart } = require('./lxr-start');
 const { createLxrApply } = require('./lxr-apply');
 const { createApplicationTickets,createApplicationManager,createApplicationMutationRest } = require('./lxr-apply-tickets');
+const {createInRole}=require('./lxr-inrole');
 
 function connectDiscord(store, env) {
-  let client, api, timer, applicationChannelRest, applicationMutationRest, recovering = false, cachedDirectory, refresh, validUntil = 0, attemptedToken;
+  let client, api, timer, applicationChannelRest, applicationMutationRest, inRole, recovering = false, cachedDirectory, refresh, validUntil = 0, attemptedToken;
   let connection = { code: 'offline', text: 'بانتظار ربط البوت' };
   const allowed = new Set((env.PROMOTER_ROLE_IDS || '').split(',').map(s => s.trim()).filter(Boolean));
   const botId = env.DISCORD_APPLICATION_ID || catalog.botId;
@@ -95,9 +96,7 @@ function connectDiscord(store, env) {
     if (!lxrStartReady && client?.isReady()) void lxrStart.publish().then(()=>{lxrStartReady=true;})
       .catch(err=>console.warn('LXR start panel:',err.code || err.message));
   };
-  const onMessage=createMessageHandler({authorize:community.dashboard,service,store,publicOrigin:env.PUBLIC_ORIGIN,run,parse:parseChat,shortcuts,
-    ticketMessages:tickets.text,assertGenericChannel:gateway.assertGenericChannel,
-    applicationResetContext:context,resetApplication:lxrApply.reset,applicationTicketMessages:applicationManager.text});
+
   const voice=createVoiceActivity(store.community);
   let voiceTimer;
   let dailyTopTimer;
@@ -140,6 +139,16 @@ function connectDiscord(store, env) {
       if (membersEnabled) intents.push(api.GatewayIntentBits.GuildMembers);
       client = new api.Client({ intents, partials:[api.Partials.Channel], allowedMentions: { parse: [], repliedUser: false } });
       const connected=client;
+      const readyRosterGuild=()=>{
+        if (client!==connected) throw Error('Stale roster gateway');
+        return readyGuild();
+      };
+      // Isolate private sends from other features' queues and never automatically retry a write.
+      const roster=createInRole({rest:createApplicationMutationRest(token),readyGuild:readyRosterGuild,botId});
+      inRole=roster;
+      const onMessage=createMessageHandler({authorize:community.dashboard,service,store,publicOrigin:env.PUBLIC_ORIGIN,run,parse:parseChat,shortcuts,
+        ticketMessages:tickets.text,assertGenericChannel:gateway.assertGenericChannel,inRole:roster,
+        applicationResetContext:context,resetApplication:lxrApply.reset,applicationTicketMessages:applicationManager.text});
       const readyTempGuild=()=>{
         if (client!==connected) throw Error('Stale voice gateway');
         return readyGuild();
@@ -173,6 +182,7 @@ function connectDiscord(store, env) {
           await games.handle(i);
           return;
         }
+        if (i.customId?.startsWith('lxr-inrole:') && await roster.button(i)) return;
         if (i.guildId!==catalog.guildId || (i.isChatInputCommand() && i.commandGuildId!==catalog.guildId)) return;
         if (await tempVoice.handle(i)) return;
         if (await lxrApply.handle(i)) return;
@@ -245,6 +255,7 @@ function connectDiscord(store, env) {
       clearInterval(voiceTimer);
       clearInterval(dailyTopTimer);
       voice.reset();
+      inRole?.close();
       client?.destroy();
       applicationChannelRest=undefined;
       let message = 'تعذّر اتصال البوت. راجع التوكن والاتصال بديسكورد.';
@@ -283,6 +294,7 @@ function connectDiscord(store, env) {
     }
     if (config.DISCORD_BOT_TOKEN?.trim() && config.DISCORD_BOT_TOKEN.trim()!==attemptedToken) {
       clearInterval(timer);
+      inRole?.close();
       await client?.destroy();
       client=undefined;
       applicationChannelRest=undefined;
@@ -292,7 +304,7 @@ function connectDiscord(store, env) {
     }
   }
   return { start, loadLocalConfig, status, authorize, dashboardAccess:community.dashboard, service, community, destinations:gateway.destinations, directory,
-    close() { clearInterval(timer); applicationChannelRest=undefined; client?.destroy(); } };
+    close() { clearInterval(timer); inRole?.close(); applicationChannelRest=undefined; client?.destroy(); } };
 }
 
 module.exports = { connectDiscord };

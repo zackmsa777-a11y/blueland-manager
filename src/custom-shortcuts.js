@@ -1,7 +1,7 @@
 'use strict';
 
 const {RuleError, parseRankChangeArgs} = require('./ladder');
-const {commands, chatAliases, parseChat} = require('./commands');
+const {commands, chatAliases, parseChat, inRoleCommand} = require('./commands');
 const {commandName, subcommandName} = require('./command-aliases');
 const {parseTop}=require('./activity-top');
 const clean = value => String(value ?? '').normalize('NFKC').trim().replace(/\s+/gu,' ');
@@ -40,6 +40,7 @@ for (const def of commands.filter(d=>commandName(d.name)===d.name)) {
 register({name:'+تخفيض',action:'demote',cat:'roles',access:'المالك أو الإداري المخوّل',desc:'خفض عضو في سلّم الطاقم.',chat:['+تخفيض','+demote'],example:'+تخفيض @العضو 3',note:'العدد بعد المنشن، والافتراضي درجة واحدة.',options:[{type:6,name:'member',required:true,description:'منشن عضو واحد'},{type:4,name:'count',required:false,description:'عدد الدرجات؛ الافتراضي 1'}]});
 for(const group of ['الجميع','البوتات'])register({name:'+ر '+group,action:'bulk-role',audience:group==='البوتات'?'bots':'members',cat:'roles',access:'مالك السيرفر فقط',desc:'يوزع رول على '+group+' بحسب الأهلية.',chat:['+ر '+group],example:`+ر ${group} @الرول`,note:'لو البوت طلب تأكيد للتوزيع، استخدم الأمر الأصلي اللي يبعته في نفس الروم.',options:[{name:'role',required:true,description:'منشن الرول أو معرّفه'}]});
 const reserved=new Set([...catalog.values()].flatMap(c=>[c.name,c.alias,...c.chat].filter(Boolean).map(n=>keyOf(n.replace(/^[+/]/,'')))));
+reserved.add(inRoleCommand.name); // Reserve the name without making the staff-only command an alias target or a public listing.
 const defaults=[{phrase:'تف',command:'/ban'},{phrase:'برا',command:'/kick'}];
 function openShortcuts(db) {
   db.exec('CREATE TABLE IF NOT EXISTS command_shortcuts (key TEXT PRIMARY KEY, phrase TEXT NOT NULL, command TEXT NOT NULL, actor TEXT NOT NULL, created INTEGER NOT NULL)');

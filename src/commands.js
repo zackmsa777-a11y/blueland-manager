@@ -84,6 +84,9 @@ const helpText=[
   'التوب · توب، توب يومي، توب أسبوعي، توب شهري. للتخصص: توب كتابي يومي أو توب فويس شهري.'
 ].join('\n');
 const isResetApply=text=>/^\+rs[ \t]+apply(?=$|\s)/u.test(text);
+const inRoleCommand={name:'inrole',usage:'الاستخدام: `+inrole معرّف_الرول` أو `+inrole @الرول`.',
+  help:'إدارة الرولات · `+inrole معرّف_الرول` أو `+inrole @الرول` داخل السيرفر؛ القائمة تصلك في الخاص.'};
+const isInRole=text=>/^\+inrole(?=$|\s)/u.test(text);
 function parseChat(text) {
   if (isResetApply(text)) {
     const match=/^\+rs[ \t]+apply[ \t]+<@!?([1-9]\d{16,19})>$/u.exec(text);
@@ -246,4 +249,4 @@ async function registerCommands(client,guildId,definitions=commands) {
   const live=await client.rest.get(endpoint);
   return definitions.filter(def=>live.some(c=>JSON.stringify(shape(c))===JSON.stringify(shape(def)))).length;
 }
-module.exports={commands,chatAliases,helpText,isResetApply,parseChat,commandRunner,interactionInput,registerCommands};
+module.exports={commands,chatAliases,helpText,isResetApply,inRoleCommand,isInRole,parseChat,commandRunner,interactionInput,registerCommands};

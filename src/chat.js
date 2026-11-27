@@ -1,7 +1,7 @@
 'use strict';
 
 const { catalog, roles, RuleError, parsePromotion, compareRoles } = require('./ladder');
-const { isResetApply } = require('./commands');
+const { isResetApply,isInRole } = require('./commands');
 const APPLY_RESET_ROLE='1574012921090932836';
 const canResetApplication=(context,actorId)=>{
   const user=context?.actor, floor=context?.roles?.get(APPLY_RESET_ROLE);
@@ -24,7 +24,7 @@ const {createDashImageLoader}=require('./dash-image');
 const {createAcceptMember}=require('./accept-member');
 
 function createMessageHandler({ authorize, service, store, publicOrigin, run, parse, shortcuts, ticketMessages, acceptOverwrites, assertGenericChannel,
-  applicationResetContext, resetApplication, applicationTicketMessages, loadDashImage=createDashImageLoader() }) {
+  applicationResetContext, resetApplication, applicationTicketMessages, inRole, loadDashImage=createDashImageLoader() }) {
   const acceptMember=createAcceptMember({store,overwrites:acceptOverwrites});
   return async function onMessage(message) {
     if (message.author.bot || message.webhookId) return;
@@ -32,10 +32,19 @@ function createMessageHandler({ authorize, service, store, publicOrigin, run, pa
     if (inGuild && message.guildId!==catalog.guildId) return;
     const text = message.content?.trim() || '';
     const resetting=isResetApply(text);
+    const roster=inGuild && inRole && isInRole(text);
     if (inGuild && applicationTicketMessages && await applicationTicketMessages(message,text)) return;
     // Do not pass applicant text to any generic path, even if channel metadata is unavailable.
     if (inGuild && assertGenericChannel) {
-      try { await assertGenericChannel(message.channelId,{useCache:!resetting}); } catch { return; }
+      try { await assertGenericChannel(message.channelId,{useCache:!resetting && !roster}); } catch { return; }
+    }
+    if (roster) {
+      try {
+        if (!assertGenericChannel || [message.channelId,message.channel?.parentId].some(id=>id &&
+          (store.community?.ticketByChannel?.(id) || store.applicationRooms?.read?.(id)))) return;
+        await inRole.text(message,text);
+      } catch {} // Never route failures to the public reply handler.
+      return;
     }
     const reply = output => message.reply({...(typeof output==='string'?{content:output}:output),allowedMentions:{parse:[],repliedUser:false}});
     const greeting=salamReply && isSalamGreeting(text);
@@ -44,7 +53,11 @@ function createMessageHandler({ authorize, service, store, publicOrigin, run, pa
     try {
       if (!inGuild) {
         if (greeting) return await replySalam();
-        if (run && ['+بنق','+ping','+مساعدة','+help'].includes(text)) await reply(await run({action:parse(text).action,actor:message.author.id}));
+        if (run && ['+بنق','+ping','+مساعدة','+help'].includes(text)) {
+          const {action}=parse(text);
+          const output=await run({action,actor:message.author.id});
+          await reply(action==='help' && inRole ? await inRole.help(message,output) : output);
+        }
         return;
       }
       if (resetting) {
