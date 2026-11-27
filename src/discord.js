@@ -139,16 +139,27 @@ function connectDiscord(store, env) {
       if (contentEnabled) intents.push(api.GatewayIntentBits.MessageContent);
       if (membersEnabled) intents.push(api.GatewayIntentBits.GuildMembers);
       client = new api.Client({ intents, partials:[api.Partials.Channel], allowedMentions: { parse: [], repliedUser: false } });
+      const connected=client;
+      const readyTempGuild=()=>{
+        if (client!==connected) throw Error('Stale voice gateway');
+        return readyGuild();
+      };
+      const tempVoice=require('./lxr-temp-voice-hooks').createTempVoiceHooks({state:store.tempVoice,readyGuild:readyTempGuild,
+        // Fresh writer for one mutation sequence, not shared with other Discord services.
+        getWriter:()=>{readyTempGuild();return createApplicationMutationRest(token);}});
       for (const event of [api.Events.GuildRoleCreate, api.Events.GuildRoleUpdate, api.Events.GuildRoleDelete]) {
         client.on(event, () => { validUntil = 0; });
       }
       client.on(api.Events.MessageCreate, onMessage);
-      client.on(api.Events.VoiceStateUpdate,(_,state)=>{
-        if (client.isReady()) trackVoice(()=>voice.update(state));
+      client.on(api.Events.VoiceStateUpdate,(old,state)=>{
+        if (client!==connected || !connected.isReady()) return;
+        trackVoice(()=>voice.update(state));
+        void tempVoice.voiceState(old,state);
       });
       client.on(api.Events.GuildUnavailable,guild=>{if(guild.id===catalog.guildId) voice.reset();});
       client.on(api.Events.ChannelDelete,c=>{
         if (c.guildId!==catalog.guildId) return;
+        void tempVoice.channelDeleted(c);
         games.removeRoom(c.id);
         store.community.ticketRemoved(c.id);
       });
@@ -163,6 +174,7 @@ function connectDiscord(store, env) {
           return;
         }
         if (i.guildId!==catalog.guildId || (i.isChatInputCommand() && i.commandGuildId!==catalog.guildId)) return;
+        if (await tempVoice.handle(i)) return;
         if (await lxrApply.handle(i)) return;
         if (await applicationManager.interaction(i)) return;
         try { await gateway.assertGenericChannel(i.channelId,{useCache:true}); }
@@ -205,8 +217,9 @@ function connectDiscord(store, env) {
         void syncTickets();
         syncLxrStart();
         syncLxrApply();
+        void tempVoice.tick();
         clearInterval(timer);
-        timer = setInterval(() => { recover().catch(() => {}); sync().catch(()=>{}); void syncTickets(); syncLxrStart(); syncLxrApply(); }, 60_000);
+        timer = setInterval(() => { recover().catch(() => {}); sync().catch(()=>{}); void syncTickets(); syncLxrStart(); syncLxrApply(); void tempVoice.tick(); }, 60_000);
         timer.unref();
         const checkpoint=()=>{
           const guild=client.isReady()?client.guilds.cache.get(catalog.guildId):null;
