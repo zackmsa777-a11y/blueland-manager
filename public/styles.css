@@ -43,7 +43,13 @@ option { background: var(--surface); color: var(--ink); }
 .top-inner, .frame { width: min(1312px, calc(100% - 80px)); margin-inline: auto; }
 .top-inner { display: flex; gap: 38px; align-items: center; }
 .brand { display: flex; align-items: center; gap: 11px; padding-block: 13px; white-space: nowrap; }
-.brand img { border-radius: 12px; width: 40px; height: 40px; }
+.brand img { width: 40px; height: 40px; flex: none; }
+.brand img, .guide-brand img, .mast-art img {
+  --logo-feather: 13%;
+  mask-image: linear-gradient(to right, transparent, #000 var(--logo-feather), #000 calc(100% - var(--logo-feather)), transparent),
+    linear-gradient(to bottom, transparent, #000 var(--logo-feather), #000 calc(100% - var(--logo-feather)), transparent);
+  mask-composite: intersect;
+}
 .brand span { font: 500 1.48rem/1 var(--latin); color: #d7e9fc; }
 .brand strong { color: white; font-weight: 600; }
 .top-nav { display: flex; align-self: stretch; align-items: stretch; gap: 26px; }
@@ -70,9 +76,8 @@ option { background: var(--surface); color: var(--ink); }
 .frame:focus { outline: none; }
 .masthead { position: relative; isolation: isolate; overflow: hidden; display: flex; align-items: center; min-height: 214px; padding: 26px 36px; background: #102540; border: 1px solid #294563; border-radius: 15px; }
 .masthead::before { content:""; position:absolute; inset:0; z-index:-2; background: linear-gradient(105deg,#05172e 5%,#102f51 44%,#102944 66%,#12233b); }
-.mast-art { position: absolute; z-index: -1; inset: 0 auto 0 0; width: 52%; overflow: hidden; mask-image: linear-gradient(to right,#000 0%,#000 52%,transparent 100%); }
-.mast-art::before { content: ""; position: absolute; inset: 0; background: url('/assets/blueland.png') left top / 150% auto no-repeat; opacity: .55; }
-.mast-art img { height: 112%; width: auto; position: absolute; left: 19%; top: -6%; mask-image: linear-gradient(90deg,transparent,#000 13%,#000 85%,transparent); }
+.mast-art { position: absolute; z-index: -1; inset: 0 auto 0 0; width: 52%; container-type: size; }
+.mast-art img { --logo-feather: 19%; --logo-size: min(calc(80% - 8px), 182px); width: min(var(--logo-size), calc(100cqh - 16px)); height: auto; position: absolute; left: 19%; top: 50%; transform: translateY(-50%); }
 .mast-copy { max-width: 64%; }
 .mast-copy h1 { font-size: 2.65rem; font-weight: 700; line-height: 1.36; }
 .mast-copy p { margin-top: 2px; font-size: 1rem; color: #c4d8e9; }
@@ -209,7 +214,7 @@ code { font-family:ui-monospace,Consolas,var(--body); font-size:.88em; color:#d6
   .masthead { min-height:190px; padding:22px; }
   .mast-copy { max-width:73%; }
   .mast-art { width:44%; }
-  .mast-art img { left:0; }
+  .mast-art img { --logo-size:min(calc(100% - 16px), 162px); left:8px; }
   .board { display:block; }
   .rail { padding:10px 14px; border-inline-end:0; border-bottom:1px solid var(--line); }
   .rail h3 { display:none; }
@@ -219,7 +224,7 @@ code { font-family:ui-monospace,Consolas,var(--body); font-size:.88em; color:#d6
 }
 @media (max-width:560px) {
   .top-inner,.frame { width:calc(100% - 24px); }
-  .brand { gap:7px; } .brand img { width:32px; height:32px; border-radius:9px; }
+  .brand { gap:7px; } .brand img { width:32px; height:32px; }
   .brand span { font-size:1.13rem; }
   .account { max-inline-size:48%; }
   .account .button { min-height:44px; padding:3px 8px; font-size:.78rem; gap:4px; }
@@ -234,9 +239,8 @@ code { font-family:ui-monospace,Consolas,var(--body); font-size:.88em; color:#d6
   .mast-copy { max-width:100%; }
   .mast-copy h1 { font-size:2.12rem; }
   .mast-copy p { max-width:75%; font-size:.84rem; }
-  .mast-art { width:39%; opacity:.7; }
-  .mast-art::before { background-size:350% auto; background-position:25% top; }
-  .mast-art img { height:76%; left:-8%; top:3%; }
+  .mast-art { width:32%; }
+  .mast-art img { --logo-size:min(calc(100% - 8px), 132px); left:4px; }
   .mast-actions { gap:7px; margin-top:14px; }
   .mast-actions .button,.mast-actions .command { min-height:37px; padding:4px 10px; font-size:.81rem; }
   .section-head { margin:18px 0 10px; gap:6px; }

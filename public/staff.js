@@ -49,7 +49,7 @@ function staffPoints(points) {
     '<p>إجمالي النقاط '+number(points.total)+rank+'</p></div><div>'+detail+'</div></section>';
 }
 function deskCommands(panel,commands) {
-  panel.innerHTML='<div class="desk-head"><h2>أوامر BlueLand</h2><label class="search" for="command-search">'+icon('search')+
+  panel.innerHTML='<div class="desk-head"><h2>أوامر LXR</h2><label class="search" for="command-search">'+icon('search')+
     '<span class="sr-only">ابحث عن أمر</span><input id="command-search" type="search" placeholder="ابحث عن أمر" autocomplete="off"></label></div><div id="command-list" class="command-list"></div>';
   const input=$('#command-search'), list=$('#command-list');
   function fill() {
@@ -136,7 +136,7 @@ function deskSettings(panel,desk) {
     e.preventDefault(); const form=e.currentTarget,submit=form.querySelector('button');
     submit.disabled=true;
     try { desk.settings=await api('/api/staff/settings',{ticketCategory:form.elements.ticketCategory.value,supportRole:form.elements.supportRole.value,
-      welcomeChannel:form.elements.welcomeChannel.value,levels:$('#count-xp').checked});$('#settings-status').textContent='حُفظت إعدادات BlueLand.'; }
+      welcomeChannel:form.elements.welcomeChannel.value,levels:$('#count-xp').checked});$('#settings-status').textContent='حُفظت إعدادات LXR.'; }
     catch(err) {$('#settings-status').textContent=err.message;}
     finally {submit.disabled=false;}
   };

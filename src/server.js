@@ -13,6 +13,10 @@ const root = path.resolve(__dirname, '..');
 const mime = { '.html':'text/html; charset=utf-8', '.js':'text/javascript; charset=utf-8', '.css':'text/css; charset=utf-8',
   '.png':'image/png', '.webp':'image/webp', '.woff2':'font/woff2', '.svg':'image/svg+xml' };
 
+// Rebrand display copy at the dashboard boundary, not shared Discord definitions or records.
+const dashboardCopy = text => text?.replace(/\bBlueLand(?: Empire| Manager)?\b/g, name =>
+  name === 'BlueLand Manager' ? 'LXR Manager' : 'LXR');
+
 function validateOrigin(value) {
   if (!value) return '';
   const parsed = new URL(value);
@@ -111,17 +115,22 @@ function createApp({ store, discord, publicOrigin = '' }) {
         if (actor) {
           try { viewer = await staff(); } catch (err) { if ([403,404].includes(err.status)) store.logout(session); }
         }
-        return json({ connection:discord.status(), viewer, needsLogin:Boolean(home && !viewer) });
+        const connection = discord.status();
+        return json({ connection:{ ...connection, text:dashboardCopy(connection.text) }, viewer, needsLogin:Boolean(home && !viewer) });
       }
       if (route.startsWith('/api/')) {
         const viewer=home ? await staff() : null;
         if (route==='/api/command-guide') {
           const current=viewer || (actor ? await staff() : null);
-          return json({commands:require('./custom-shortcuts').commandGuide(store.shortcuts),canEdit:Boolean(current?.rights?.config)});
+          const commands = require('./custom-shortcuts').commandGuide(store.shortcuts).map(command => ({
+            ...command, desc:dashboardCopy(command.desc),
+            options:command.options.map(option => ({ ...option, description:dashboardCopy(option.description) }))
+          }));
+          return json({commands,canEdit:Boolean(current?.rights?.config)});
         }
         if (route==='/api/commands') {
           const {commands}=require('./commands');
-          return json(commands.map(c=>({name:c.name,description:c.description,subcommands:c.options.filter(o=>o.type===1).map(o=>o.name)})));
+          return json(commands.map(c=>({name:c.name,description:dashboardCopy(c.description),subcommands:c.options.filter(o=>o.type===1).map(o=>o.name)})));
         }
         if (route==='/api/staff') {
           const viewer=await staff();
@@ -155,7 +164,7 @@ function createApp({ store, discord, publicOrigin = '' }) {
       res.end(req.method === 'HEAD' ? undefined : bytes);
     } catch (err) {
       if (res.headersSent) return res.end();
-      json({ error:err instanceof RuleError ? err.message : 'تعذّر إتمام الطلب. راجع اتصال البوت وسجل الترقيات.' }, err.status && err instanceof RuleError ? err.status : 502);
+      json({ error:err instanceof RuleError ? dashboardCopy(err.message) : 'تعذّر إتمام الطلب. راجع اتصال البوت وسجل الترقيات.' }, err.status && err instanceof RuleError ? err.status : 502);
     }
   });
 }

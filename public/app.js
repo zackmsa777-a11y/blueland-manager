@@ -63,9 +63,9 @@ function section(title, side) {
 }
 function openConnection() {
   const connection = state.status?.connection;
-  changeDialog('اتصال BlueLand Manager', `<p>${escapeHtml(connection?.text || 'حالة الاتصال غير متاحة')}</p>
-    ${connection?.code === 'online' ? '<p>أوامر السلاش المسجّلة في BlueLand: '+number(connection.slashReady || 0)+' من '+number(connection.slashTotal || 0)+'.</p><p>استخدم <bdi>/dashboard</bdi> لطلب رمز دخول خاص.'+(connection.contentEnabled===false?' أوامر + تحتاج تفعيل Message Content Intent.':'')+'</p>' :
-    `<ol class="steps"><li>ضع توكن تطبيق <bdi>BlueLand Manager</bdi> في <code>DISCORD_BOT_TOKEN</code> داخل ملف <code>.env</code> بالمشروع.</li>
+  changeDialog('اتصال LXR Manager', `<p>${escapeHtml(connection?.text || 'حالة الاتصال غير متاحة')}</p>
+    ${connection?.code === 'online' ? '<p>أوامر السلاش المسجّلة في LXR: '+number(connection.slashReady || 0)+' من '+number(connection.slashTotal || 0)+'.</p><p>استخدم <bdi>/dashboard</bdi> لطلب رمز دخول خاص.'+(connection.contentEnabled===false?' أوامر + تحتاج تفعيل Message Content Intent.':'')+'</p>' :
+    `<ol class="steps"><li>ضع توكن تطبيق <bdi>LXR Manager</bdi> في <code>DISCORD_BOT_TOKEN</code> داخل ملف <code>.env</code> بالمشروع.</li>
     <li>فعّل <bdi>Message Content Intent</bdi> في إعدادات التطبيق، وتأكد أن رول البوت يعلو درجات الترقية ولديه <bdi>Manage Roles</bdi>.</li>
     <li>احفظ الملف. تلتقط اللوحة التوكن تلقائيًا أثناء التشغيل. لبدء المشروع من جديد شغّل <code>npm start</code>.</li></ol>`}`);
 }
@@ -88,7 +88,7 @@ function login() {
     return;
   }
   const online = state.status?.connection.code === 'online';
-  changeDialog('دخول الإدارة', `<p>اكتب <bdi dir="ltr">+لوحة</bdi> في سيرفر BlueLand. يرسل لك البوت في الخاص رمزًا صالحًا لخمس دقائق.</p>
+  changeDialog('دخول الإدارة', `<p>اكتب <bdi dir="ltr">+لوحة</bdi> في سيرفر LXR. يرسل لك البوت في الخاص رمزًا صالحًا لخمس دقائق.</p>
     ${online ? `<form id="login-form"><label class="field">رمز الدخول<input name="code" dir="ltr" autocomplete="one-time-code" required maxlength="24"></label>
     <button class="button primary">دخول اللوحة</button></form>` :
     `<p class="note">البوت غير متصل حاليًا. فعّل الربط لطلب رمز الدخول.</p><div class="dialog-actions"><button id="setup" class="button quiet">إعداد اتصال البوت</button></div>`}`);
@@ -306,13 +306,13 @@ function renderView() {
   const hash=location.hash.slice(1);
   state.view=['ladder','directory','history','staff'].includes(hash) ? hash : 'ladder';
   const headings = {
-    ladder:['إدارة الترقيات','درجات الطاقم وصلاحيات كل فئة في سيرفر BlueLand Empire.'],
+    ladder:['إدارة الترقيات','درجات الطاقم وصلاحيات كل فئة في سيرفر LXR.'],
     directory:['رولات السيرفر','ابحث بالاسم أو المعرّف لعرض فئة الرول ومكانه في ترتيب ديسكورد.'],
     history:['سجل الترقيات','تابع ترقية كل عضو، ومن نفّذها، والدرجة التي انتقل إليها.'],
-    staff:['مكتب الطاقم','طلبات الأعضاء وتذاكر الدعم وسجل الإشراف في BlueLand.']
+    staff:['مكتب الطاقم','طلبات الأعضاء وتذاكر الدعم وسجل الإشراف في LXR.']
   };
   const [title,intro]=headings[state.view];
-  document.title=title+' | BlueLand Empire';
+  document.title=title+' | LXR Empire';
   $('#heading').textContent=title;
   $('#intro').textContent=intro;
   $('.mast-actions').hidden=state.view!=='ladder';
@@ -338,7 +338,7 @@ async function boot() {
     const status=await refreshStatus();
     if (status.needsLogin) {
       state.catalog=null; state.roles.clear(); state.grades=[];
-      content.innerHTML='<div class="empty"><h2>دخول طاقم BlueLand</h2><p>أدخل رمز +لوحة لعرض دليل الرولات والترقيات.</p><button class="button primary" id="gated-login">دخول الإدارة</button></div>';
+      content.innerHTML='<div class="empty"><h2>دخول طاقم LXR</h2><p>أدخل رمز +لوحة لعرض دليل الرولات والترقيات.</p><button class="button primary" id="gated-login">دخول الإدارة</button></div>';
       $('#gated-login').onclick=login;
       return;
     }
