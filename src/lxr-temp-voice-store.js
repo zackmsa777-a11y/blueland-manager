@@ -35,6 +35,33 @@ function openTempVoiceStore(db) {
     room_id TEXT REFERENCES lxr_temp_voice(id) ON DELETE CASCADE,
     CHECK(room_id IS NULL OR room_id = channel_id)
   ) STRICT;
+  CREATE TABLE IF NOT EXISTS lxr_temp_voice_panel_embed_reservation (
+    channel_id TEXT NOT NULL PRIMARY KEY,
+    room_id TEXT REFERENCES lxr_temp_voice(id) ON DELETE CASCADE,
+    CHECK(room_id IS NULL OR room_id = channel_id)
+  ) STRICT;
+  CREATE TABLE IF NOT EXISTS lxr_temp_voice_panel_retirement (
+    channel_id TEXT NOT NULL PRIMARY KEY,
+    room_id TEXT REFERENCES lxr_temp_voice(id) ON DELETE CASCADE,
+    legacy_id TEXT NOT NULL,
+    embed_id TEXT NOT NULL,
+    attempt TEXT,
+    retry_at INTEGER,
+    settled INTEGER NOT NULL DEFAULT 0 CHECK(settled IN (0,1)),
+    CHECK(room_id IS NULL OR room_id = channel_id),
+    CHECK(legacy_id <> embed_id),
+    CHECK((attempt IS NOT NULL) + (retry_at IS NOT NULL) + settled = 1)
+  ) STRICT;
+  CREATE TABLE IF NOT EXISTS lxr_temp_voice_emoji_publication (
+    application_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    sha256 TEXT NOT NULL,
+    attempt TEXT,
+    emoji_id TEXT,
+    proof TEXT CHECK(proof IS NULL OR (proof IN ('upload','cdn') AND emoji_id IS NOT NULL)),
+    PRIMARY KEY(application_id,name),
+    CHECK(attempt IS NOT NULL OR emoji_id IS NOT NULL)
+  ) STRICT;
   CREATE TABLE IF NOT EXISTS lxr_temp_voice_capacity_lock (
     room_id TEXT NOT NULL PRIMARY KEY REFERENCES lxr_temp_voice(id) ON DELETE CASCADE,
     prior_limit INTEGER NOT NULL CHECK(prior_limit BETWEEN 0 AND 99),
@@ -87,9 +114,65 @@ function openTempVoiceStore(db) {
       FROM lxr_temp_voice WHERE id IS NOT NULL AND handoff_owner_id IS NOT NULL AND opened=0
         AND (move_at IS NOT NULL OR move_retry_at IS NOT NULL)`);
   });
-  const reservePanel=db.prepare(`INSERT OR IGNORE INTO lxr_temp_voice_panel_reservation(channel_id,room_id)
-    SELECT ?,? WHERE ? IS NULL OR EXISTS (SELECT 1 FROM lxr_temp_voice WHERE id=?)`);
-  const releasePanel=db.prepare('DELETE FROM lxr_temp_voice_panel_reservation WHERE channel_id=? AND room_id IS ?');
+  // Keep the original journal readable by the previous panel version; its
+  // unresolved writes neither authorize nor block the new embed publication.
+  const panelStatements=new Map([['v1','lxr_temp_voice_panel_reservation'],
+    ['embed','lxr_temp_voice_panel_embed_reservation']].map(([format,table])=>[format,{
+    reserve:db.prepare(`INSERT OR IGNORE INTO ${table}(channel_id,room_id)
+      SELECT ?,? WHERE ? IS NULL OR EXISTS (SELECT 1 FROM lxr_temp_voice WHERE id=?)`),
+    release:db.prepare(`DELETE FROM ${table} WHERE channel_id=? AND room_id IS ?`)
+  }]));
+  function panelStatement(channelId,voice,format) {
+    if(!isId(channelId)||typeof voice!=='boolean'||!panelStatements.has(format)) {
+      throw new TypeError('Invalid temporary voice panel reservation');
+    }
+    return panelStatements.get(format);
+  }
+  const retirementKey='channel_id=? AND room_id IS ? AND legacy_id=? AND embed_id=?';
+  const getRetirement=db.prepare(`SELECT legacy_id AS legacyId,embed_id AS embedId,attempt,retry_at AS retryAt,settled
+    FROM lxr_temp_voice_panel_retirement WHERE channel_id=? AND room_id IS ?`);
+  const beginRetirement=db.prepare(`INSERT INTO lxr_temp_voice_panel_retirement(channel_id,room_id,legacy_id,embed_id,attempt)
+    SELECT ?,?,?,?,? WHERE ? IS NULL OR EXISTS (SELECT 1 FROM lxr_temp_voice WHERE id=?)
+    ON CONFLICT(channel_id) DO UPDATE SET attempt=excluded.attempt,retry_at=NULL WHERE
+      room_id IS excluded.room_id AND legacy_id=excluded.legacy_id AND embed_id=excluded.embed_id AND retry_at<=?`);
+  const deferRetirement=db.prepare(`UPDATE lxr_temp_voice_panel_retirement SET attempt=NULL,retry_at=? WHERE ${retirementKey} AND attempt=?`);
+  const settleRetirement=db.prepare(`UPDATE lxr_temp_voice_panel_retirement SET attempt=NULL,retry_at=NULL,settled=1 WHERE ${retirementKey}`);
+  function retirementScope(channelId,voice) {
+    if(!isId(channelId)||typeof voice!=='boolean') throw new TypeError('Invalid temporary voice retirement route');
+    return [channelId,voice?channelId:null];
+  }
+  function retirementIdentity(channelId,voice,legacyId,embedId) {
+    if(!isId(legacyId)||!isId(embedId)||legacyId===embedId) throw new TypeError('Invalid temporary voice retirement identity');
+    return [...retirementScope(channelId,voice),legacyId,embedId];
+  }
+  // R1 IDs may have come from the name alone. Keep them as identity fences,
+  // never backfill them as proof of artwork.
+  const hasEmojiProof=()=>db.prepare('PRAGMA table_info(lxr_temp_voice_emoji_publication)').all().some(col=>col.name==='proof');
+  if(!hasEmojiProof()) write(()=>{
+    if(!hasEmojiProof()) db.exec(`ALTER TABLE lxr_temp_voice_emoji_publication
+      ADD COLUMN proof TEXT CHECK(proof IS NULL OR (proof IN ('upload','cdn') AND emoji_id IS NOT NULL))`);
+  });
+  const getEmoji=db.prepare(`SELECT sha256,emoji_id AS id,proof FROM lxr_temp_voice_emoji_publication
+    WHERE application_id=? AND name=?`);
+  const reserveEmoji=db.prepare(`INSERT INTO lxr_temp_voice_emoji_publication(application_id,name,sha256,attempt)
+    VALUES (?,?,?,?) ON CONFLICT(application_id,name) DO NOTHING`);
+  const freeEmojiId=`NOT EXISTS (SELECT 1 FROM lxr_temp_voice_emoji_publication
+    WHERE application_id=$app AND emoji_id=$id AND name<>$name)`;
+  const recordEmojiUpload=db.prepare(`UPDATE lxr_temp_voice_emoji_publication SET emoji_id=$id,proof='upload'
+    WHERE application_id=$app AND name=$name AND sha256=$digest AND attempt=$attempt
+    AND (emoji_id IS NULL OR emoji_id=$id) AND ${freeEmojiId}`);
+  const bindEmojiArtwork=db.prepare(`INSERT INTO lxr_temp_voice_emoji_publication(application_id,name,sha256,emoji_id,proof)
+    SELECT $app,$name,$digest,$id,'cdn' WHERE ${freeEmojiId}
+    ON CONFLICT(application_id,name) DO UPDATE SET emoji_id=excluded.emoji_id,proof=coalesce(proof,'cdn')
+    WHERE sha256=excluded.sha256 AND (emoji_id IS NULL OR emoji_id=excluded.emoji_id)`);
+  const releaseEmoji=db.prepare(`DELETE FROM lxr_temp_voice_emoji_publication
+    WHERE application_id=? AND name=? AND sha256=? AND attempt=? AND emoji_id IS NULL`);
+  function emojiIdentity(applicationId,name,sha256) {
+    if(!isId(applicationId)||typeof name!=='string'||!/^embedvc_[a-z]+_[a-f0-9]{8}$/.test(name)||name.length>32||
+      typeof sha256!=='string'||!/^[a-f0-9]{64}$/.test(sha256)||!name.endsWith(`_${sha256.slice(0,8)}`)) {
+      throw new TypeError('Invalid temporary voice emoji identity');
+    }
+  }
   const rooms=`SELECT r.*,h.move_at AS attempt_at,h.move_attempt AS attempt_token,h.retry_at AS attempt_retry_at
     FROM lxr_temp_voice r LEFT JOIN lxr_temp_voice_handoff h
       ON h.owner_id=r.handoff_owner_id AND h.session_id=r.session_id AND h.room_id=r.id AND h.marker=r.marker`;
@@ -144,14 +227,51 @@ function openTempVoiceStore(db) {
   const get=id=>isId(id)?hydrate(getRow.get(id)):null;
   return {
     get,
-    reservePanelPublication(channelId,voice=false) {
-      if(!isId(channelId)||typeof voice!=='boolean') throw new TypeError('Invalid temporary voice panel channel');
+    reservePanelPublication(channelId,voice=false,format='v1') {
       const roomId=voice?channelId:null;
-      return reservePanel.run(channelId,roomId,roomId,roomId).changes===1;
+      return panelStatement(channelId,voice,format).reserve.run(channelId,roomId,roomId,roomId).changes===1;
     },
-    releasePanelPublication(channelId,voice=false) {
-      if(!isId(channelId)||typeof voice!=='boolean') throw new TypeError('Invalid temporary voice panel channel');
-      return releasePanel.run(channelId,voice?channelId:null).changes===1;
+    releasePanelPublication(channelId,voice=false,format='v1') {
+      return panelStatement(channelId,voice,format).release.run(channelId,voice?channelId:null).changes===1;
+    },
+    getPanelRetirement(channelId,voice) {
+      return getRetirement.get(...retirementScope(channelId,voice))??null;
+    },
+    beginPanelRetirement(channelId,voice,legacyId,embedId,at) {
+      if(!Number.isSafeInteger(at)) throw new TypeError('Invalid temporary voice retirement time');
+      const key=retirementIdentity(channelId,voice,legacyId,embedId), roomId=key[1], attempt=randomUUID();
+      return beginRetirement.run(...key,attempt,roomId,roomId,at).changes===1?attempt:null;
+    },
+    deferPanelRetirement(channelId,voice,legacyId,embedId,attempt,retryAt) {
+      if(!attempt||!Number.isSafeInteger(retryAt)) throw new TypeError('Invalid temporary voice retirement refusal');
+      return deferRetirement.run(retryAt,...retirementIdentity(channelId,voice,legacyId,embedId),attempt).changes===1;
+    },
+    settlePanelRetirement(channelId,voice,legacyId,embedId) {
+      return settleRetirement.run(...retirementIdentity(channelId,voice,legacyId,embedId)).changes===1;
+    },
+    getEmojiPublication(applicationId,name,sha256) {
+      emojiIdentity(applicationId,name,sha256);
+      return getEmoji.get(applicationId,name)??null;
+    },
+    reserveEmojiPublication(applicationId,name,sha256) {
+      emojiIdentity(applicationId,name,sha256);
+      const attempt=randomUUID();
+      return reserveEmoji.run(applicationId,name,sha256,attempt).changes===1?attempt:null;
+    },
+    recordEmojiUpload(applicationId,name,sha256,id,attempt) {
+      emojiIdentity(applicationId,name,sha256);
+      if(!isId(id)||typeof attempt!=='string'||!attempt) throw new TypeError('Invalid temporary voice emoji receipt');
+      return recordEmojiUpload.run({app:applicationId,name,digest:sha256,id,attempt}).changes===1;
+    },
+    bindEmojiArtwork(applicationId,name,sha256,id) {
+      emojiIdentity(applicationId,name,sha256);
+      if(!isId(id)) throw new TypeError('Invalid temporary voice emoji ID');
+      return bindEmojiArtwork.run({app:applicationId,name,digest:sha256,id}).changes===1;
+    },
+    releaseEmojiPublication(applicationId,name,sha256,attempt) {
+      emojiIdentity(applicationId,name,sha256);
+      if(typeof attempt!=='string'||!attempt) throw new TypeError('Invalid temporary voice emoji attempt');
+      return releaseEmoji.run(applicationId,name,sha256,attempt).changes===1;
     },
     byOwner:ownerId=>isId(ownerId)?hydrate(ownerRow.get(ownerId)):null,
     byWaiting:waitingId=>isId(waitingId)?hydrate(waitingRow.get(waitingId)):null,

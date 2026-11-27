@@ -9,7 +9,7 @@ function setup(replacements={}) {
   let active=true;
   const here={id:G,available:true}, other={id:P,available:true};
   const hooks=createTempVoiceHooks({readyGuild:()=>{if(!active) throw Error('offline');return here;},
-    state:{},getWriter:()=>({}),report:()=>messages.push(['error']),
+    state:replacements.state??{},getWriter:()=>({}),report:()=>messages.push(['error']),
     createLifecycle:opts=>{
       assert.deepEqual([opts.guildId,opts.lobbyId,opts.categoryId],[G,L,C]);
       return {voiceState:(old,v)=>messages.push(['voice',old.channelId,v.channelId]),
@@ -56,7 +56,12 @@ test('owned control interactions never fall through, and failures are private an
   assert.equal(replies.length,1);
   assert.equal(replies[0].flags,MessageFlags.Ephemeral);
   assert.deepEqual(replies[0].allowedMentions,{parse:[]});
-  assert.doesNotMatch(replies[0].content,/private example/u);
+  assert.equal(replies[0].content,undefined);
+  assert.equal(replies[0].embeds.length,1);
+  assert.doesNotMatch(replies[0].embeds[0].toJSON().description,/private example/u);
+  let edited=0;
+  await hooks.handle({...i,deferred:true,ephemeral:false,editReply:()=>{edited++;}});
+  assert.equal(edited,0,'a public deferred message never carries a private error');
 });
 
 test('one public publish is independent of periodic voice reconciliation',async()=>{
@@ -64,4 +69,23 @@ test('one public publish is independent of periodic voice reconciliation',async(
   await hooks.tick();
   await hooks.tick();
   assert.deepEqual(messages,[['publish'],['reconcile'],['reconcile']]);
+});
+
+test('migrates occupied registered panels in bounded batches without rechecking healthy rooms',async()=>{
+  const records=Array.from({length:6},(_,i)=>({id:`20000000000000004${i}`,panelReady:i!==5}));
+  const posted=[];
+  const {hooks,messages,here}=setup({state:{list:()=>records,get:id=>records.find(room=>room.id===id)},panel:{upgradeVoicePanel(guild,id) {
+    assert.equal(guild,here);
+    posted.push(id);
+    return P;
+  }}});
+  // Last rooms are either empty (4) or not yet handled by normal lifecycle (5).
+  here.voiceStates={cache:new Map([...records.slice(0,4),records[5]].map((room,i)=>[i,{guild:here,channelId:room.id}]))};
+  await Promise.all([hooks.tick(),hooks.tick()]);
+  assert.deepEqual(posted,records.slice(0,2).map(room=>room.id));
+  await hooks.tick();
+  assert.deepEqual(posted,records.slice(0,4).map(room=>room.id));
+  await hooks.tick();
+  assert.deepEqual(posted,records.slice(0,4).map(room=>room.id));
+  assert.deepEqual(messages,[['publish'],['reconcile'],['reconcile'],['reconcile']]);
 });

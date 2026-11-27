@@ -2,17 +2,33 @@
 
 const assert = require('node:assert/strict');
 const { createHash } = require('node:crypto');
-const { readFileSync } = require('node:fs');
+const { mkdtempSync, readFileSync, rmSync } = require('node:fs');
+const { tmpdir } = require('node:os');
+const { join } = require('node:path');
 const { DatabaseSync } = require('node:sqlite');
 const { test } = require('node:test');
-const { ButtonInteraction, ChannelType, Client, ComponentType, GatewayIntentBits, InteractionResponseType, InteractionType,
-  MessageFlags, ModalSubmitInteraction, OverwriteType, PermissionFlagsBits: Perm, RateLimitError, Routes, Status,
+const { ButtonInteraction, ChannelType, Client, ComponentType, DiscordAPIError, GatewayIntentBits, InteractionResponseType, InteractionType,
+  MessageFlags, ModalSubmitInteraction, OverwriteType, PermissionFlagsBits: Perm, RateLimitError, REST, Routes, Status,
   StringSelectMenuInteraction, UserSelectMenuInteraction } = require('discord.js');
 
 const GUILD = '1573975432838127708';
 const SOURCE = '1574640612500578495';
-const GUIDE_POST = '1575635524591419506';
-const GUIDE_ID = '1575635523916144722';
+const GUIDE_POST = '1575844663921872966';
+const GUIDE_ID = '1575844663250919444';
+const LEGACY_POST = '1575842951056195664';
+const LEGACY_NAME = 'tempvoice-guide-1.png';
+const ACTIONS = [
+  [['name', 'تغيير إسم', '✏️'], ['limit', 'حد عدد الاعضاء', '👥'], ['privacy', 'قفل وفتح الدخول', '🔒'],
+    ['waiting', 'غرفة الانتظار', '🕒'], ['trust', 'الثقة', '➕']],
+  [['untrust', 'عدم الثقة', '➖'], ['invite', 'دعوة', '📞'], ['disconnect', 'طرد', '📵'],
+    ['region', 'تغيير منطقة', '🌐'], ['block', 'حظر', '🚫']],
+  [['unblock', 'رفع الحظر', '🔓'], ['claim', 'اخذ الملكية', '👑'], ['transfer', 'نقل ملكية', '📝'],
+    ['delete', 'حذف', '🗑️'], ['chat', 'دردشة', '💬']],
+];
+const DISABLED = new Set(['waiting', 'trust', 'untrust', 'block', 'unblock', 'chat']);
+const EMOJIS = Object.fromEntries(ACTIONS.flat().map(([kind], i) => [kind, {
+  id: String(1579500000000000000n + BigInt(i)), name: `tv_${kind}`,
+}]));
 const OWNER = '1486306919324057682';
 const BOT = '1575000000000000001';
 const PANEL = '1575632962240774264';
@@ -21,11 +37,35 @@ const LOBBY = '1575147982381129748';
 const ROOM = '1577000000000000001';
 const NEXT_ROOM = '1577000000000000002';
 const OTHER_ID = '1577000000000000003';
-const NAME = 'tempvoice-guide-1.png';
+const NAME = 'tempvoice-guide.png';
 const GUIDE = process.env.LXR_TEMP_VOICE_TEST_GUIDE ? readFileSync(process.env.LXR_TEMP_VOICE_TEST_GUIDE) : Buffer.alloc(59175, 0x93);
 const digest = data => createHash('sha256').update(data).digest('hex');
-const attachment = (channel, id) => ({ id, filename: NAME, size: GUIDE.length, content_type: 'image/png',
-  url: `https://cdn.discordapp.com/attachments/${channel}/${id}/${NAME}?ex=123&is=456&hm=abc` });
+const { openTempVoiceStore } = require('../src/lxr-temp-voice-store');
+const { createApplicationMutationRest } = require('../src/lxr-apply-tickets');
+function panelStore(t, ...rooms) {
+  const db = new DatabaseSync(':memory:');
+  t.after(() => db.close());
+  const state = openTempVoiceStore(db);
+  for (const [index, id] of rooms.entries()) {
+    assert.ok(state.begin(index ? OTHER_ID : OWNER, `panel-test-${id}`, `session-${id}`, []));
+    assert.equal(state.bind(index ? OTHER_ID : OWNER, `panel-test-${id}`, id).id, id);
+  }
+  return state;
+}
+const attachment = (channel, id, name = NAME) => ({ id, filename: name, size: GUIDE.length, content_type: 'image/png',
+  url: `https://cdn.discordapp.com/attachments/${channel}/${id}/${name}?ex=123&is=456&hm=abc` });
+
+function legacyMessage(channel = PANEL, id = LEGACY_POST) {
+  const art = attachment(channel, '1575842950724830000', LEGACY_NAME);
+  return { id, channel_id: channel, author: { id: BOT, bot: true }, flags: MessageFlags.IsComponentsV2,
+    content: '', embeds: [], attachments: [], components: [
+      { type: ComponentType.MediaGallery, items: [{ media: { url: art.url } }] },
+      ...ACTIONS.map(row => ({ type: ComponentType.ActionRow, components: row.map(([kind, label, name]) => ({
+        type: ComponentType.Button, custom_id: `lxr-temp-voice:${kind}`, style: kind === 'delete' ? 4 : 2,
+        label, emoji: { name }, disabled: DISABLED.has(kind),
+      })) })),
+    ] };
+}
 
 function harness({ sourcePatch, channelPatch, modifyPost, fetchImage, ...options } = {}) {
   const { createTempVoicePanel } = require('../src/lxr-temp-voice-panel');
@@ -33,75 +73,106 @@ function harness({ sourcePatch, channelPatch, modifyPost, fetchImage, ...options
   client.user = { id: BOT };
   const posts = [];
   const reads = [];
-  const downloads = [];
+  const downloads = [], deletions = [], trace = [];
   const messages = new Map([PANEL, ROOM, NEXT_ROOM].map(id => [id, []]));
   const source = { id: GUIDE_POST, channel_id: SOURCE, author: { id: OWNER }, attachments: [attachment(SOURCE, GUIDE_ID)], ...sourcePatch };
   const guild = { id: GUILD, client };
   client.rest.get = async (route, opts) => {
     reads.push({ route, opts });
+    trace.push(`GET ${route}`);
     if (route === Routes.channelMessage(SOURCE, GUIDE_POST)) return source;
     const [, id, step, messageId] = route.match(/^\/channels\/(\d+)(?:\/(messages)(?:\/(\d+))?)?$/) ?? [];
     if (id && !step) return { id, guild_id: GUILD, parent_id: CATEGORY,
       type: id === PANEL ? ChannelType.GuildText : ChannelType.GuildVoice, ...channelPatch };
     if (!messages.has(id)) throw Error(`unexpected read ${route}`);
-    if (messageId) return messages.get(id).find(m => m.id === messageId);
+    if (messageId) {
+      const found = messages.get(id).find(m => m.id === messageId);
+      if (!found) throw new DiscordAPIError({ message: 'Unknown Message', code: 10008 }, 10008, 404, 'GET',
+        `https://discord.com/api/v10${route}`, {});
+      return found;
+    }
     return messages.get(id).filter(m => !opts.query.get('before') || m.id < opts.query.get('before')).slice(0, Number(opts.query.get('limit')));
   };
   const writer = { post: async (route, data) => {
     const id = [...messages.keys()].find(id => route === Routes.channelMessages(id));
     assert.ok(id, 'writes only hit the intended message route');
     posts.push({ route, data });
+    trace.push(`POST ${route}`);
     const messageId = (1578000000000000000n + BigInt(posts.length)).toString();
-    const storedAttachment = attachment(id, (1579000000000000000n + BigInt(posts.length)).toString());
-    const message = { ...structuredClone(data.body), id: messageId, channel_id: id,
+    const storedAttachment = attachment(id, (1579000000000000000n + BigInt(posts.length)).toString(), data.files[0].name);
+    const message = { ...JSON.parse(JSON.stringify(data.body)), id: messageId, channel_id: id,
       author: { id: BOT, bot: true }, attachments: [storedAttachment] };
-    message.components[0].items[0].media.url = storedAttachment.url;
+    if (message.embeds) message.embeds[0].image.url = storedAttachment.url;
+    else message.components[0].items[0].media.url = storedAttachment.url;
     messages.get(id).unshift(message);
     return modifyPost ? modifyPost(message) : { id: messageId };
+  }, delete: async route => {
+    trace.push(`DELETE ${route}`);
+    deletions.push(route);
+    for (const [channel, list] of messages) {
+      const index = list.findIndex(({ id }) => Routes.channelMessage(channel, id) === route);
+      if (index !== -1) list.splice(index, 1);
+    }
   } };
-  const dependencies = { guildId: GUILD, panelId: PANEL, readyGuild: () => guild, getWriter: () => writer,
+  const dependencies = { guildId: GUILD, panelId: PANEL, readyGuild: () => guild, getWriter: () => writer, getEmojis: async () => EMOJIS,
     actions: {}, ...(process.env.LXR_TEMP_VOICE_TEST_GUIDE ? {} : { guideSha256: digest(GUIDE) }),
     fetchImage: async (url, opts) => {
       downloads.push({ url, opts });
+      trace.push(`FETCH ${new URL(url).pathname}`);
       return fetchImage ? fetchImage(url, opts) : new Response(GUIDE);
     }, ...options };
   return { panel: createTempVoicePanel(dependencies), create: overrides => createTempVoicePanel({...dependencies, ...overrides}),
-    client, guild, posts, reads, messages, source, downloads, writer };
+    client, guild, posts, reads, messages, source, downloads, deletions, trace, writer };
 }
 
-test('publishes one Discord media item above three exact native button rows and verifies the resulting message', async () => {
+test('serializes one native Embed with the unchanged guide above three exact icon-only rows', async () => {
   const { panel, posts, reads, downloads } = harness();
   assert.equal(await panel.publish(), '1578000000000000001');
   assert.equal(posts.length, 1);
   const [{ route, data: { body, files } }] = posts;
   assert.equal(route, Routes.channelMessages(PANEL));
-  assert.equal(body.flags, MessageFlags.IsComponentsV2);
+  assert.equal(body.flags ?? 0, 0);
   assert.deepEqual(body.allowed_mentions, { parse: [], replied_user: false });
   assert.equal(body.content, undefined);
-  assert.equal(body.embeds, undefined);
-  assert.equal(body.nonce, PANEL);
+  assert.equal(body.embeds.length, 1);
+  assert.equal(body.embeds[0].title, 'واجهة التحكم بالرومات الصوتية');
+  assert.match(body.embeds[0].description, /[\p{Script=Arabic}]/u);
+  assert.match(body.embeds[0].footer.text, /[\p{Script=Arabic}]/u);
+  assert.equal(body.embeds[0].image.url, `attachment://${NAME}`);
+  assert.notEqual(body.nonce, PANEL, 'migration uses a nonce distinct from the old V2 post');
+  assert.ok(body.nonce.length <= 25);
   assert.equal(body.enforce_nonce, true);
   assert.equal(files.length, 1);
   assert.equal(files[0].name, NAME);
   assert.equal(digest(files[0].data), digest(GUIDE));
-  assert.equal(body.components[0].type, ComponentType.MediaGallery);
-  assert.equal(body.components[0].items[0].media.url, `attachment://${NAME}`);
-  assert.deepEqual(body.components.slice(1).map(row => row.components.map(button => button.label)), [
-    ['تغيير إسم', 'حد عدد الاعضاء', 'قفل وفتح الدخول', 'غرفة الانتظار', 'الثقة'],
-    ['عدم الثقة', 'دعوة', 'طرد', 'تغيير منطقة', 'حظر'],
-    ['رفع الحظر', 'اخذ الملكية', 'نقل ملكية', 'حذف', 'دردشة'],
-  ]);
-  const buttons = body.components.slice(1).flatMap(row => {
+  assert.deepEqual(body.components.map(row => {
     assert.equal(row.type, ComponentType.ActionRow);
-    return row.components;
-  });
-  assert.ok(buttons.every(b => b.type === ComponentType.Button && b.custom_id.startsWith('lxr-temp-voice:') && !b.url));
-  assert.equal(new Set(buttons.map(b => b.custom_id)).size, 15);
-  assert.deepEqual(buttons.filter(b => b.disabled).map(b => b.label),
-    ['غرفة الانتظار', 'الثقة', 'عدم الثقة', 'حظر', 'رفع الحظر', 'دردشة']);
+    return row.components.map(b => {
+      assert.equal(b.type, ComponentType.Button);
+      assert.equal(b.label, undefined);
+      assert.equal(b.url, undefined);
+      return { id: b.custom_id, emoji: b.emoji, style: b.style, disabled: b.disabled };
+    });
+  }), ACTIONS.map(row => row.map(([kind]) => ({ id: `lxr-temp-voice:${kind}`, emoji: EMOJIS[kind],
+    style: kind === 'delete' ? 4 : 2, disabled: DISABLED.has(kind) }))));
   assert.deepEqual(downloads.map(d => d.opts.redirect), ['error', 'error']);
   assert.equal(new URL(downloads[0].url).pathname, `/attachments/${SOURCE}/${GUIDE_ID}/${NAME}`);
   assert.ok(reads.some(({ route }) => route === Routes.channelMessage(PANEL, '1578000000000000001')));
+});
+
+test('replaces the authenticated startup V2 panel only after verifying exact new Embed bytes', async t => {
+  const h = harness({ state: panelStore(t) });
+  h.messages.get(PANEL).push(legacyMessage());
+  const id = await h.panel.publish();
+  const modernRoute = Routes.channelMessage(PANEL, id);
+  const legacyRoute = Routes.channelMessage(PANEL, LEGACY_POST);
+  assert.equal(h.posts.length, 1);
+  assert.deepEqual(h.deletions, [legacyRoute]);
+  assert.ok(h.trace.indexOf(`GET ${modernRoute}`) < h.trace.indexOf(`DELETE ${legacyRoute}`));
+  assert.ok(h.trace.indexOf(`FETCH /attachments/${PANEL}/1579000000000000001/${NAME}`) < h.trace.indexOf(`DELETE ${legacyRoute}`));
+  assert.equal(h.trace.at(-1), `GET ${legacyRoute}`);
+  assert.equal(await h.create().publish(), id);
+  assert.deepEqual(h.messages.get(PANEL).map(message => message.id), [id]);
 });
 
 test('deduplicates concurrent publishes and recovers the exact panel on a fresh instance', async () => {
@@ -110,6 +181,35 @@ test('deduplicates concurrent publishes and recovers the exact panel on a fresh 
   assert.deepEqual(ids, Array(3).fill('1578000000000000001'));
   assert.equal(await create().publish(), ids[0]);
   assert.equal(posts.length, 1);
+});
+
+test('the default renderer uses the verified IDs from the real emoji provider', async t => {
+  const { art } = require('../src/lxr-temp-voice-emoji-art');
+  const state = panelStore(t);
+  const entries = Object.entries(art).map(([kind, { name, png }]) => [{ id: EMOJIS[kind].id, name, animated: false }, png]);
+  const pngs = new Map(entries.map(([{ id }, png]) => [`https://cdn.discordapp.com/emojis/${id}.png`, Buffer.from(png, 'base64')]));
+  let emojiDownloads = 0;
+  const h = harness({ getEmojis: undefined, state, fetchImage: url => {
+    if (!pngs.has(url)) return new Response(GUIDE);
+    emojiDownloads++;
+    return new Response(pngs.get(url));
+  } });
+  h.client.user.bot = true;
+  h.client.application = { id: BOT };
+  const route = Routes.applicationEmojis(BOT);
+  const read = createApplicationMutationRest('fixture-only', { makeRequest: async (url, { method, headers }) => {
+    assert.equal(method, 'GET');
+    assert.equal(new URL(url).pathname, '/api/v10' + route);
+    assert.equal(new Headers(headers).get('authorization'), 'Bot fixture-only');
+    return Response.json({ items: entries.map(([row]) => row) });
+  } });
+  const get = h.client.rest.get;
+  h.client.rest.get = (path, opts) => path === route ? read.get(path, opts) : get(path, opts);
+  assert.equal(await h.create().publish(), await h.panel.publish());
+  assert.equal(emojiDownloads, 15);
+  assert.equal(h.posts.length, 1);
+  assert.deepEqual(h.posts[0].data.body.components.flatMap(row => row.components.map(button => button.emoji)),
+    ACTIONS.flat().map(([kind]) => ({ id: EMOJIS[kind].id, name: art[kind].name })));
 });
 
 test('posts to each verified voice channel route only once and never to the lobby or foreign guild', async () => {
@@ -125,6 +225,21 @@ test('posts to each verified voice channel route only once and never to the lobb
   assert.deepEqual(posts.map(p => p.route).sort(), [ROOM, NEXT_ROOM].map(Routes.channelMessages));
 });
 
+test('upgrades only a verified existing legacy voice-chat panel, not an empty served room', async t => {
+  const state = panelStore(t, ROOM, NEXT_ROOM);
+  const h = harness({ state });
+  h.messages.get(ROOM).push(legacyMessage(ROOM));
+  assert.equal(await h.panel.upgradeVoicePanel(h.guild, NEXT_ROOM), null);
+  assert.equal(h.posts.length, 0);
+  const id = await h.panel.upgradeVoicePanel(h.guild, ROOM);
+  assert.ok(id);
+  assert.deepEqual(h.posts.map(post => post.route), [Routes.channelMessages(ROOM)]);
+  assert.deepEqual(h.deletions, [Routes.channelMessage(ROOM, LEGACY_POST)]);
+  assert.equal(state.getPanelRetirement(ROOM, true).settled, 1);
+  assert.equal(state.remove(ROOM), true);
+  assert.equal(state.getPanelRetirement(ROOM, true), null, 'retirement journal cascades with the managed room');
+});
+
 test('rejects cross-category voice and non-text static routes before reading the guide or writing', async () => {
   const outside = harness({ channelPatch: { parent_id: SOURCE } });
   await assert.rejects(outside.panel.postVoicePanel(outside.guild, ROOM));
@@ -136,10 +251,12 @@ test('rejects cross-category voice and non-text static routes before reading the
   }
 });
 
-test('recovers a committed panel when the write response is lost', async () => {
-  const { panel, posts } = harness({ modifyPost: () => { throw Error('timed out'); } });
+test('recovers a committed panel when the write response is lost', async t => {
+  const { panel, posts, messages, deletions } = harness({ state: panelStore(t), modifyPost: () => { throw Error('timed out'); } });
+  messages.get(PANEL).push(legacyMessage());
   assert.equal(await panel.publish(), '1578000000000000001');
   assert.equal(posts.length, 1);
+  assert.deepEqual(deletions, [Routes.channelMessage(PANEL, LEGACY_POST)]);
 });
 
 test('does not repeat an ambiguous publication with no message visible yet', async () => {
@@ -179,15 +296,19 @@ test('a fresh SQLite store wrapper cannot repeat an ambiguous control-room or ma
       assert.equal(state.begin(OWNER, 'test-marker', 'test-session', []), true);
       assert.equal(state.bind(OWNER, 'test-marker', ROOM).id, ROOM);
     }
+    assert.equal(state.reservePanelPublication(id, id === ROOM, 'v1'), true);
     const h = harness({ state, modifyPost: () => {
-      h.messages.get(id).length = 0;
+      h.messages.get(id).shift();
       throw Error('timed out');
     } });
+    h.messages.get(id).push(legacyMessage(id));
     const publish = panel => id === PANEL ? panel.publish() : panel.postVoicePanel(h.guild, ROOM);
     await assert.rejects(publish(h.panel), /not confirmed/);
     assert.equal(h.posts.length, 1);
     await assert.rejects(publish(h.create({ state: openTempVoiceStore(db) })), /not confirmed/);
     assert.equal(h.posts.length, 1);
+    assert.deepEqual(h.messages.get(id).map(message => message.id), [LEGACY_POST]);
+    assert.deepEqual(h.deletions, []);
   }
 });
 
@@ -200,22 +321,34 @@ test('definitive SDK HTTP 429 releases only the intended panel reservation for a
   assert.ok(state.begin(OWNER, 'test-marker', 'test-session', []));
   assert.equal(state.bind(OWNER, 'test-marker', ROOM).id, ROOM);
   for (const id of [PANEL, ROOM]) {
+    assert.equal(state.reservePanelPublication(id, id === ROOM, 'v1'), true);
     let wire = 0;
     const rejected = createApplicationMutationRest('offline-panel-test', { makeRequest: async (url, options) => {
       assert.equal(options.method,'POST');
       assert.equal(new URL(url).pathname,'/api/v10'+Routes.channelMessages(id));
+      const payload = JSON.parse(options.body.get('payload_json'));
+      const upload = options.body.get('files[0]');
+      assert.equal(payload.embeds[0].image.url, `attachment://${NAME}`);
+      assert.equal(payload.flags ?? 0, 0);
+      assert.equal(payload.components.length, 3);
+      assert.equal(upload.name, NAME);
+      assert.equal(digest(Buffer.from(await upload.arrayBuffer())), digest(GUIDE));
       wire++;
       return Response.json({message:'Slow down',retry_after:0.01,global:false},{status:429,
         headers:{'retry-after':'0.01','x-ratelimit-scope':'shared'}});
     } });
     const h = harness({ state, getWriter:()=>rejected });
+    h.messages.get(id).push(legacyMessage(id));
     const publish = panel => id === PANEL ? panel.publish() : panel.postVoicePanel(h.guild,ROOM);
     await assert.rejects(publish(h.panel), /not confirmed/);
     assert.equal(wire,1,'a definitive rate rejection must not retry inline');
     assert.equal(h.posts.length,0);
+    assert.deepEqual(h.deletions,[]);
     const fresh = h.create({state:openTempVoiceStore(db),getWriter:()=>h.writer});
     assert.ok(await publish(fresh));
     assert.equal(h.posts.length,1);
+    assert.deepEqual(h.deletions,[Routes.channelMessage(id, LEGACY_POST)]);
+    assert.equal(state.reservePanelPublication(id, id === ROOM, 'v1'), false);
   }
 });
 
@@ -234,21 +367,29 @@ test('a rate limit during verification of a committed POST does not release its 
     return get(route,opts);
   };
   await assert.rejects(h.panel.publish(),/not confirmed/);
-  assert.equal(state.reservePanelPublication(PANEL),false);
+  assert.equal(state.reservePanelPublication(PANEL,false,'embed'),false);
   throttled=false;
   assert.equal(await h.create({state:openTempVoiceStore(db)}).publish(),h.messages.get(PANEL)[0].id);
   assert.equal(h.posts.length,1);
 });
 
-test('verifies the original guide from the resolved media gallery when Discord omits gallery uploads from attachments', async () => {
-  const h = harness({ modifyPost: message => {
-    message.attachments = [];
-    return { id: message.id };
-  } });
-  const id = await h.panel.publish();
-  assert.equal(await h.create().publish(), id);
-  assert.equal(h.posts.length, 1);
-  assert.equal(h.downloads.length, 3);
+test('verifies original Embed guide bytes when Discord only returns a resolved CDN or proxy image', async () => {
+  for (const mode of ['cdn', 'proxy', 'attachment URI and proxy']) {
+    const h = harness({ modifyPost: message => {
+      delete message.attachments;
+      if (mode !== 'cdn') message.embeds[0].image = {
+        proxy_url: message.embeds[0].image.url.replace('cdn.discordapp.com', 'media.discordapp.net') + '&width=350',
+        ...(mode === 'attachment URI and proxy' ? { url: `attachment://${NAME}` } : {}),
+      };
+      return { id: message.id };
+    } });
+    const id = await h.panel.publish();
+    assert.equal(await h.create().publish(), id);
+    assert.equal(h.posts.length, 1);
+    assert.equal(h.downloads.length, 3);
+    assert.equal(new URL(h.downloads.at(-1).url).hostname, 'cdn.discordapp.com');
+    assert.equal(new URL(h.downloads.at(-1).url).searchParams.get('width'), null);
+  }
 });
 
 test('does not publish to a non-managed voice channel in the correct category', async () => {
@@ -261,9 +402,71 @@ test('does not publish to a non-managed voice channel in the correct category', 
 test('does not recover a mismatched bot panel or post a replacement when old state is ambiguous', async () => {
   const { panel, create, posts, messages } = harness();
   await panel.publish();
-  messages.get(PANEL)[0].components[1].components[0].label = 'wrong';
+  messages.get(PANEL)[0].components[0].components[0].label = 'wrong';
   await assert.rejects(create().publish());
   assert.equal(posts.length, 1);
+});
+
+test('does not remove the old published ID when its legacy buttons do not authenticate', async () => {
+  const h = harness();
+  const legacy = legacyMessage();
+  legacy.components[1].components[0].label = 'wrong';
+  h.messages.get(PANEL).push(legacy);
+  await assert.rejects(h.panel.publish(), /history conflicts/);
+  assert.deepEqual(h.deletions, []);
+  assert.equal(h.posts.length, 0);
+});
+
+test('does not replace an otherwise matching public V2 panel with an unexpected ID', async () => {
+  const h = harness();
+  h.messages.get(PANEL).push(legacyMessage(PANEL, OTHER_ID));
+  await assert.rejects(h.panel.publish(), /history conflicts/);
+  assert.deepEqual(h.deletions, []);
+  assert.equal(h.posts.length, 0);
+});
+
+test('keeps the old controls if the replacement disappears before retiring the previous message', async t => {
+  const state = panelStore(t);
+  const h = harness({ state });
+  h.messages.get(PANEL).push(legacyMessage());
+  const get = h.client.rest.get;
+  h.client.rest.get = (route, opts) => {
+    if (h.messages.get(PANEL).length === 2 && route === Routes.channelMessage(PANEL, LEGACY_POST)) {
+      h.messages.get(PANEL).shift();
+    }
+    return get(route, opts);
+  };
+  await assert.rejects(h.panel.publish());
+  assert.deepEqual(h.deletions, []);
+  assert.deepEqual(h.messages.get(PANEL).map(message => message.id), [LEGACY_POST]);
+  assert.equal(state.getPanelRetirement(PANEL, false), null, 'never journal a retirement before verifying the new panel');
+});
+
+test('does not delete a valid legacy panel when new readback fails exact Embed verification', async () => {
+  for (const tamper of [
+    message => { message.embeds[0].description += '!'; },
+    message => { message.embeds[0].footer.text += '!'; },
+    message => { message.embeds[0].image.url = message.embeds[0].image.url.replace(PANEL, ROOM); },
+    message => { message.components[0].components[0].emoji.id = EMOJIS.limit.id; },
+    message => { message.components[0].components[0].disabled = true; },
+    message => { message.flags = MessageFlags.IsComponentsV2; },
+  ]) {
+    const h = harness({ modifyPost: message => { tamper(message); return { id: message.id }; } });
+    h.messages.get(PANEL).push(legacyMessage());
+    await assert.rejects(h.panel.publish(), /not confirmed/);
+    assert.equal(h.posts.length, 1);
+    assert.deepEqual(h.deletions, []);
+    assert.equal(h.messages.get(PANEL).at(-1).id, LEGACY_POST);
+  }
+});
+
+test('does not delete a valid legacy panel when the replacement attachment digest is wrong', async () => {
+  const h = harness({ fetchImage: url => new Response(url.includes(`${PANEL}/1579000000000000001/`)
+    ? Buffer.alloc(GUIDE.length, (GUIDE[0] + 1) % 256) : GUIDE) });
+  h.messages.get(PANEL).push(legacyMessage());
+  await assert.rejects(h.panel.publish(), /not confirmed/);
+  assert.equal(h.posts.length, 1);
+  assert.deepEqual(h.deletions, []);
 });
 
 test('never downloads a guide from a different publisher, wrong CDN, wrong path, or ambiguous attachment', async () => {
@@ -305,14 +508,14 @@ const interactionClasses = {
   [ComponentType.UserSelect]: UserSelectMenuInteraction,
 };
 
-async function controls({ current = { roomId: ROOM, ownerId: MEMBER, canClaim: false, locked: false, lockGeneration:'0' }, origin = PANEL, ...options } = {}) {
+async function controls({ current = { roomId: ROOM, ownerId: MEMBER, canClaim: false, locked: false, lockGeneration:'0' }, origin = PANEL, setupMessage, ...options } = {}) {
   const inspected = [], executed = [];
   const h = harness({ actions: {
     inspect: async request => { inspected.push(request); return { ...current }; },
     run: async request => { executed.push(request); return 'تم التحديث.'; },
   }, ...options });
   const { client, guild, panel, messages } = h;
-  const messageId = await (origin === PANEL ? panel.publish() : panel.postVoicePanel(guild, origin));
+  const messageId = await (setupMessage ? setupMessage(h) : origin === PANEL ? panel.publish() : panel.postVoicePanel(guild, origin));
   const message = messages.get(origin).find(m => m.id === messageId);
   const callbacks = [], replies = [];
   const previousGet = client.rest.get;
@@ -348,11 +551,163 @@ async function controls({ current = { roomId: ROOM, ownerId: MEMBER, canClaim: f
       data: { custom_id: id, component_type: type, values } });
   }
   const click = (kind, opts) => panel.handle(event(P + kind, opts));
-  const response = () => replies.at(-1);
+  const response = () => {
+    const reply = replies.at(-1);
+    assert.equal(reply.flags, MessageFlags.Ephemeral);
+    assert.ok(!reply.content);
+    assert.equal(reply.embeds.length, 1);
+    assert.equal(typeof reply.embeds[0].description, 'string');
+    return { ...reply, description: reply.embeds[0].description };
+  };
   const control = (from, row = 0, pos = 0) => from.components[row].components[pos];
   const choose = (from, item, opts) => panel.handle(event(item.custom_id, { from, type: item.type, ...opts }));
   return { ...h, current, origin, message, callbacks, replies, inspected, executed, event, click, response, control, choose };
 }
+
+test('legacy controls still open private prompts when startup cannot verify the custom emojis', async () => {
+  const h = await controls({ getEmojis: async () => ({}), setupMessage: async h => {
+    h.messages.get(PANEL).push(legacyMessage());
+    await assert.rejects(h.panel.publish(), /emojis not verified/);
+    assert.equal(h.posts.length, 0);
+    assert.deepEqual(h.deletions, []);
+    return LEGACY_POST;
+  } });
+  assert.equal(await h.click('name'), true);
+  assert.equal(h.control(h.response()).type, ComponentType.Button);
+  assert.equal(h.inspected.length, 1);
+});
+
+test('clicking an unverified embed never provisions emojis and the old V2 still works with no registry', async t => {
+  const state = panelStore(t);
+  const calls = [];
+  const h = await controls({ state, getEmojis: undefined, setupMessage: async h => {
+    h.client.user.bot = true;
+    h.client.application = { id: BOT };
+    const route = Routes.applicationEmojis(BOT);
+    const transport = createApplicationMutationRest('fixture-only', { makeRequest: async (url, { method }) => {
+      assert.equal(new URL(url).pathname, '/api/v10' + route);
+      calls.push(method);
+      return method === 'GET' ? Response.json({ items: [] }) : Response.json({ message: 'unavailable' }, { status: 503 });
+    } });
+    const get = h.client.rest.get;
+    h.client.rest.get = (path, opts) => path === route ? transport.get(path, opts) : get(path, opts);
+    h.writer.post = transport.post.bind(transport);
+    h.messages.get(PANEL).push(legacyMessage(), { id: OTHER_ID, channel_id: PANEL, author: { id: BOT, bot: true },
+      embeds: [{ title: 'واجهة التحكم بالرومات الصوتية' }],
+      components: [{ type: ComponentType.ActionRow, components: [{ type: ComponentType.Button,
+        custom_id: P + 'name', style: 2, label: 'Unexpected' }] }] });
+    return OTHER_ID;
+  } });
+  assert.equal(await h.click('name'), true);
+  assert.deepEqual(calls, ['GET']);
+  assert.deepEqual(h.inspected, []);
+  assert.equal(await h.click('name', { from: h.messages.get(PANEL)[0] }), true);
+  assert.equal(h.control(h.response()).type, ComponentType.Button);
+  assert.equal(h.inspected.length, 1);
+  assert.deepEqual(calls, ['GET']);
+});
+
+test('both verified messages serve clicks on a fresh instance when deleting the prior panel failed', async t => {
+  const h = await controls({ state: panelStore(t), setupMessage: async h => {
+    h.messages.get(PANEL).push(legacyMessage());
+    h.writer.delete = async () => { throw Error('could not delete'); };
+    await assert.rejects(h.panel.publish(), /deletion not confirmed/);
+    return h.messages.get(PANEL)[0].id;
+  } });
+  const fresh = h.create();
+  assert.equal(await fresh.handle(h.event(P + 'name')), true);
+  assert.equal(h.control(h.response()).type, ComponentType.Button);
+  assert.equal(await fresh.handle(h.event(P + 'name', { from: h.messages.get(PANEL).at(-1) })), true);
+  assert.equal(h.control(h.response()).type, ComponentType.Button);
+  assert.equal(h.inspected.length, 2);
+  assert.equal(h.posts.length, 1);
+});
+
+test('timed-out retirement plus 503 readback never repeats the exact DELETE or POST after restarting', async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'lxr-panel-retirement-'));
+  let db, deletes = 0, unavailable = false, exactReads = 0;
+  const reopen = () => {
+    db?.close();
+    db = new DatabaseSync(join(dir, 'panel.sqlite'));
+    return openTempVoiceStore(db);
+  };
+  t.after(() => { db?.close(); rmSync(dir, { recursive: true, force: true }); });
+  const route = Routes.channelMessage(PANEL, LEGACY_POST);
+  const h = await controls({ state: reopen(), setupMessage: async h => {
+    h.messages.get(PANEL).push(legacyMessage());
+    const read = new REST({ retries: 0, makeRequest: async (url, { method }) => {
+      assert.equal(method, 'GET');
+      assert.equal(new URL(url).pathname, '/api/v10' + route);
+      exactReads++;
+      if (unavailable) return Response.json({ message: 'read unavailable' }, { status: 503 });
+      const old = h.messages.get(PANEL).find(m => m.id === LEGACY_POST);
+      return old ? Response.json(old) : Response.json({ message: 'Unknown Message', code: 10008 }, { status: 404 });
+    } }).setToken('fixture-only');
+    read.clearHashSweeper(); read.clearHandlerSweeper();
+    const get = h.client.rest.get;
+    h.client.rest.get = (path, opts) => path === route ? read.get(path, opts) : get(path, opts);
+    const writer = createApplicationMutationRest('fixture-only', { makeRequest: async (url, { method }) => {
+      assert.equal(method, 'DELETE');
+      assert.equal(new URL(url).pathname, '/api/v10' + route);
+      deletes++;
+      unavailable = true;
+      throw new DOMException('timeout before response', 'TimeoutError');
+    } });
+    h.writer.delete = writer.delete.bind(writer);
+    await assert.rejects(h.panel.publish(), /deletion not confirmed/);
+    assert.equal(exactReads, 3, 'both prior reads succeeded, only the DELETE readback was unavailable');
+    assert.equal(deletes, 1);
+    unavailable = false;
+    return h.messages.get(PANEL)[0].id;
+  } });
+
+  const fresh = h.create({ state: reopen() });
+  await assert.rejects(fresh.publish(), /deletion not confirmed/);
+  assert.equal(deletes, 1, 'an exact positive readback of the surviving old message must not reauthorize DELETE');
+  assert.equal(h.posts.length, 1);
+  assert.deepEqual(h.messages.get(PANEL).map(m => m.id), [h.message.id, LEGACY_POST]);
+  for (const from of h.messages.get(PANEL)) {
+    assert.equal(await fresh.handle(h.event(P + 'name', { from })), true);
+    assert.equal(h.control(h.response()).type, ComponentType.Button);
+  }
+  assert.equal(h.inspected.length, 2);
+
+  h.messages.get(PANEL).pop(); // The original request later commits.
+  unavailable = true;
+  await assert.rejects(h.create({ state: reopen() }).publish(), /deletion not confirmed/);
+  unavailable = false;
+  assert.equal(await h.create({ state: reopen() }).publish(), h.message.id);
+  assert.equal(deletes, 1);
+  assert.equal(h.posts.length, 1);
+});
+
+test('only an exact SDK DELETE refusal permits retirement after persistent backoff', async t => {
+  const db = new DatabaseSync(':memory:');
+  t.after(() => db.close());
+  let now = 1_000, attempted = 0;
+  const h = harness({ state: openTempVoiceStore(db), now: () => now });
+  h.messages.get(PANEL).push(legacyMessage());
+  const route = Routes.channelMessage(PANEL, LEGACY_POST);
+  const remove = h.writer.delete;
+  const writer = createApplicationMutationRest('fixture-only', { offset: 0, makeRequest: async (url, { method }) => {
+    assert.equal(method, 'DELETE');
+    assert.equal(new URL(url).pathname, '/api/v10' + route);
+    if (++attempted === 1) return Response.json({ message: 'Slow down', retry_after: 2 },
+      { status: 429, headers: { 'retry-after': '2', 'x-ratelimit-scope': 'shared' } });
+    await remove(route);
+    return new Response(null, { status: 204 });
+  } });
+  h.writer.delete = writer.delete.bind(writer);
+  await assert.rejects(h.panel.publish(), /deletion not confirmed/);
+  now = 2_999;
+  await assert.rejects(h.create({ state: openTempVoiceStore(db) }).publish(), /deletion not confirmed/);
+  assert.equal(attempted, 1);
+  now = 3_001;
+  assert.equal(await h.create({ state: openTempVoiceStore(db) }).publish(), '1578000000000000001');
+  assert.equal(attempted, 2);
+  assert.equal(h.posts.length, 1);
+  assert.deepEqual(h.deletions, [route]);
+});
 
 test('validates the exact bot-authored source before opening any private owner prompt', async () => {
   const h = await controls();
@@ -489,7 +844,7 @@ test('a previously open lock prompt cannot re-lock a room after an intervening l
   h.current.lockGeneration='2';
   await h.choose(earlier,h.control(earlier),{values:['locked']});
   assert.deepEqual(h.executed,[]);
-  assert.match(h.response().content,/انتهت صلاحية/u);
+  assert.match(h.response().description,/انتهت صلاحية/u);
 });
 
 test('disabled controls cannot start a prompt even if a caller submits their component IDs', async () => {

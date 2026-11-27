@@ -1,7 +1,7 @@
 'use strict';
 
 const { randomBytes } = require('node:crypto');
-const { ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, LabelBuilder, MessageFlags, ModalBuilder,
+const { ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, EmbedBuilder, LabelBuilder, MessageFlags, ModalBuilder,
   Routes, StringSelectMenuBuilder, TextInputBuilder, TextInputStyle, UserSelectMenuBuilder } = require('discord.js');
 
 const DENIED = 'ما قدرت أفتح التحكم. تأكد أنك داخل غرفتك المؤقتة وجرّب من جديد.';
@@ -54,8 +54,9 @@ function createTempVoiceUi({ guildId, panelId, lobbyId, getGuild, actions, verif
   const ttl = Math.max(1, Math.min(180_000, Number.isFinite(frameTtlMs) ? frameTtlMs : 120_000));
   const framePrefix = `${prefix}f:`;
   const ack = i => i.deferReply({ flags: MessageFlags.Ephemeral });
-  const finish = (i, content, components = []) => i.editReply({ content, components, allowedMentions: mentions });
-  const deny = (i, content) => i.reply({ content, flags: MessageFlags.Ephemeral, allowedMentions: mentions });
+  const feedback = description => ({ embeds: [new EmbedBuilder().setDescription(description)], allowedMentions: mentions });
+  const finish = (i, description, components = []) => i.editReply({ ...feedback(description), content: null, components });
+  const deny = (i, description) => i.reply({ ...feedback(description), flags: MessageFlags.Ephemeral });
 
   function purge() {
     const time = now();
@@ -200,7 +201,9 @@ function createTempVoiceUi({ guildId, panelId, lobbyId, getGuild, actions, verif
     }
 
     const action = i.customId.slice(prefix.length);
-    if (!i.isButton() || i.message.webhookId || ephemeral(i.message) || !i.message.flags?.has(MessageFlags.IsComponentsV2)) return false;
+    if (!i.isButton() || i.message.webhookId || ephemeral(i.message)) return false;
+    // Accept both display formats here; verifySource still checks the canonical message and guide.
+    if (!i.message.flags?.has(MessageFlags.IsComponentsV2) && i.message.embeds?.length !== 1) return false;
     if (disabled.has(action)) return true;
     if (!privateControl(i.message, i.customId, ComponentType.Button)) return false;
     // A known different ID can be rejected without spending the acknowledgement window on REST.
