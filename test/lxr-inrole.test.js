@@ -9,11 +9,14 @@ const G='1573975432838127708', B='1573988210185347223', O='200000000000000001', 
 const M='200000000000000003', R='200000000000000004', C='200000000000000005', D='200000000000000006';
 const OTHER='200000000000000007', POST='200000000000000008';
 const MANAGE=(1n<<28n).toString(), ADMIN='8';
+const BOT_WRITES=1024n|2048n|16384n|65536n|(1n<<38n); // View, Send, Embed, History, Send in Threads.
+const PARENT='200000000000000057', THREAD='200000000000000058';
 const user=(id,bot=false)=>({id,username:'fixture',discriminator:'0',bot});
 const role=(id,name,permissions='0',managed=false)=>({id,name,permissions,managed,color:0,position:1,hoist:false,mentionable:false});
 const member=(id,roles=[],bot=false)=>({user:user(id,bot),roles,joined_at:'2025-01-01T00:00:00.000Z',deaf:false,mute:false,pending:false});
 const ids=n=>Array.from({length:n},(_,i)=>String(200000000000000100n+BigInt(i)));
 const none={parse:[],users:[],roles:[],replied_user:false};
+const replyTo=(message,channel=C)=>({message_id:message,channel_id:channel,guild_id:G,fail_if_not_exists:true});
 const line=id=>`<@${id}> — \`${id}\``;
 const speaker=(id,channel)=>({id:channel,type:1,recipients:[user(id)]});
 const origin={id:C,guild_id:G,type:0,name:'public',parent_id:null,permission_overwrites:[]};
@@ -23,10 +26,11 @@ const inbound=({id,author,content,channel,guild,webhook})=>({id,type:0,content,c
 
 async function fixture(t,n=23) {
   const store=openStore(':memory:');
-  const f={store,idList:ids(n),inventory:[role(G,'@everyone'),role(M,'Manager',MANAGE),role(R,'Actual Discord role','0',true)],
-    guild:{id:G,owner_id:O},actor:member(A,[M]),dm:speaker(A,D),calls:[],posts:[],overrides:new Map(),accept:new Map(),others:new Map()};
+  const f={store,idList:ids(n),inventory:[role(G,'@everyone',String(BOT_WRITES)),role(M,'Manager',MANAGE),role(R,'Actual Discord role','0',true)],
+    guild:{id:G,owner_id:O},actor:member(A,[M]),dm:speaker(A,D),calls:[],posts:[],overrides:new Map(),accept:new Map(),others:new Map(),rooms:new Map([[C,origin]])};
   const json=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:{'content-type':'application/json'}});
   const row=(body,id=POST,channel=D)=>({...inbound({id,author:user(B,true),content:body.content??'',channel}),
+    ...(body.message_reference?{type:19,message_reference:body.message_reference}:{}),
     embeds:body.embeds??[],components:body.components??[]});
   f.roster=[member(A,[M]),...f.idList.map(id=>member(id,[R]))];
   f.makeRequest=async (url,opts)=>{
@@ -43,6 +47,7 @@ async function fixture(t,n=23) {
     if (path===`/guilds/${G}` && opts.method==='GET') return json(f.guild);
     if (path===`/guilds/${G}/roles` && opts.method==='GET') return json(f.inventory);
     if (path===`/guilds/${G}/members/${A}` && opts.method==='GET') return f.actor?json(f.actor):json({code:10007,message:'Unknown Member'},404);
+    if (path===`/guilds/${G}/members/${B}` && opts.method==='GET') return json(member(B,[],true));
     if (path.startsWith(`/guilds/${G}/members/`) && opts.method==='GET' && f.others.has(path.split('/').at(-1)))
       return json(f.others.get(path.split('/').at(-1)).member);
     if (path===`/guilds/${G}/members` && opts.method==='GET') {
@@ -50,20 +55,20 @@ async function fixture(t,n=23) {
       assert.ok(Number.isInteger(limit) && limit>=1 && limit<=1000);
       return json(f.roster.filter(m=>BigInt(m.user.id)>BigInt(req.query.after??'0')).slice(0,limit));
     }
-    if (path===`/channels/${C}` && opts.method==='GET') return json(origin);
     const dmFor=id=>id===D?f.dm:[...f.others.values()].find(x=>x.dm.id===id)?.dm;
-    const dmId=path.split('/')[2];
-    if (path===`/channels/${dmId}` && opts.method==='GET' && dmFor(dmId)) return json(dmFor(dmId));
+    const roomId=path.split('/')[2];
+    if (path===`/channels/${roomId}` && opts.method==='GET' && (f.rooms.has(roomId) || dmFor(roomId)))
+      return json(f.rooms.get(roomId)??dmFor(roomId));
     if (path==='/users/@me/channels' && opts.method==='POST') {
       assert.deepEqual(Object.keys(body),['recipient_id']);
       return json(body.recipient_id===A?f.dm:f.others.get(body.recipient_id).dm);
     }
-    if (path===`/channels/${dmId}/messages` && opts.method==='POST' && dmFor(dmId)) {
-      const msg=row(body,String(BigInt(POST)+BigInt(f.posts.length)),dmId);
+    if (path===`/channels/${roomId}/messages` && opts.method==='POST' && (f.rooms.has(roomId) || dmFor(roomId))) {
+      const msg=row(body,String(BigInt(POST)+BigInt(f.posts.length)),roomId);
       f.posts.push(req);f.sent=msg;return json(msg);
     }
-    if (path===`/channels/${D}/messages/${f.sent?.id}` && opts.method==='PATCH') {
-      f.sent=row(body,f.sent.id);return json(f.sent);
+    if (path===`/channels/${roomId}/messages/${f.sent?.id}` && roomId===f.sent.channel_id && opts.method==='PATCH') {
+      f.sent=row({...body,message_reference:f.sent.message_reference},f.sent.id,roomId);return json(f.sent);
     }
     if (/^\/interactions\/\d+\/[^/]+\/callback$/u.test(path) && opts.method==='POST') {
       f.accept.set(path.split('/')[2],body);return new Response(null,{status:204});
@@ -103,24 +108,30 @@ async function fixture(t,n=23) {
       author:options.author??user(A),webhook:options.webhook}));
     assert.ok(pending.has(id),'SDK emitted MessageCreate');
     try {await pending.get(id);} finally {pending.delete(id);}
+    return id;
   };
   f.click=async (customId,options={})=>{
-    const id=String(++serial), chan=options.channel??{id:D,type:1};
+    const id=String(++serial), chan=options.channel??f.rooms.get(f.sent?.channel_id)??{id:D,type:1};
+    const guild=options.guild===null?undefined:options.guild??chan.guild_id;
     const message=options.message??f.sent;
     // Immutable Message identity fields otherwise come from the previous cached event instead of this wire fixture.
     client.channels.cache.get(chan.id)?.messages?.cache.delete(message.id);
+    const actor=options.user??user(A);
     client.actions.InteractionCreate.handle({id,token:'synthetic-component',application_id:options.application??B,type:3,
       data:{component_type:options.component??2,custom_id:customId,...(options.component===3?{values:['missing-item']}: {})},
-      channel:chan,message,user:options.user??user(A),version:1,locale:'en-US',app_permissions:'0',entitlements:[],
-      authorizing_integration_owners:{'0':options.guild??'0'},
-      ...(options.guild?{guild_id:options.guild}: {})});
+      channel:chan,message,version:1,locale:'en-US',app_permissions:'0',entitlements:[],
+      authorizing_integration_owners:{'0':guild??'0'},
+      ...(guild?{guild_id:guild,member:{...member(actor.id,[M]),user:actor,permissions:MANAGE}}:{user:actor})});
     assert.ok(pending.has(id),'SDK emitted InteractionCreate');
     try {await pending.get(id);} finally {pending.delete(id);}
     return f.accept.get(id);
   };
   f.patches=()=>f.calls.filter(x=>x.method==='PATCH');
-  f.noPublic=()=>assert.equal(f.calls.filter(x=>['POST','PATCH'].includes(x.method) && x.path.startsWith('/channels/') &&
-    ![D,...[...f.others.values()].map(x=>x.dm.id)].includes(x.path.split('/')[2])).length,0);
+  f.room=(data)=>{f.rooms.set(data.id,data);client.channels._add(data,guild);};
+  f.writes=()=>f.calls.filter(x=>['POST','PATCH','PUT','DELETE'].includes(x.method) && !x.path.startsWith('/interactions/'));
+  f.onlyRoom=(id=C)=>assert.ok(f.writes().every(x=>x.path===`/channels/${id}/messages` ||
+    x.path.startsWith(`/channels/${id}/messages/`)));
+
   f.response=json;
   f.members=()=>f.calls.filter(x=>x.method==='GET' && x.path===`/guilds/${G}/members`);
   f.addActor=(actor,channel)=>{
@@ -143,30 +154,104 @@ function expectPage(message,roleName,total,page,rows) {
 }
 const control=(f,direction=1)=>f.sent.components[0].components[direction].custom_id;
 
-test('a native guild MessageCreate delivers the exact role total and first 20 rows only to the verified DM',async t=>{
+test('a native guild MessageCreate delivers exactly one anchored, non-pinging source-room Reply and no DM',async t=>{
   const f=await fixture(t);
-  await f.message(`+inrole <@&${R}>`);
-  assert.equal(f.posts.length,1,'authorized invocation must send one verified DM roster');
+  const invoking=await f.message(`+inrole <@&${R}>`);
+  assert.deepEqual(f.calls.filter(x=>x.method==='POST').map(x=>[x.path,x.body.message_reference]),
+    [[`/channels/${C}/messages`,replyTo(invoking)]]);
+  assert.equal(f.posts.length,1);
+  assert.equal(f.sent.type,19);
   assert.deepEqual(f.posts[0].body.allowed_mentions,none);
   expectPage(f.sent,'Actual Discord role',23,1,f.idList.slice(0,20));
-  f.noPublic();
 });
 
-test('native buttons edit the exact DM message to page two and back without reviving an old button',async t=>{
+test('native buttons edit the same anchored guild Reply to page two and back without reviving an old button',async t=>{
   const f=await fixture(t);
-  await f.message();
+  const invoking=await f.message();
   const original=f.sent, next=control(f);
+  assert.equal(await f.click(control(f,0)),undefined);
   assert.deepEqual(await f.click(next),{type:6});
   assert.equal(f.posts.length,1);
   assert.equal(f.patches().length,1);
-  assert.equal(f.patches()[0].path,`/channels/${D}/messages/${POST}`);
+  assert.equal(f.patches()[0].path,`/channels/${C}/messages/${POST}`);
   assert.deepEqual(f.patches()[0].body.allowed_mentions,none);
+  assert.deepEqual(f.sent.message_reference,replyTo(invoking));
   expectPage(f.sent,'Actual Discord role',23,2,f.idList.slice(20));
+  assert.equal(await f.click(control(f)),undefined);
   assert.deepEqual(await f.click(control(f,0)),{type:6});
   expectPage(f.sent,'Actual Discord role',23,1,f.idList.slice(0,20));
   assert.equal(await f.click(next,{message:original}),undefined);
   assert.equal(f.patches().length,2);
-  f.noPublic();
+  f.onlyRoom();
+});
+
+test('a room becoming an application path blocks page writes and roster/error replies',async t=>{
+  const f=await fixture(t);
+  await f.message();
+  const first=f.sent, writes=f.writes().length;
+  f.rooms.set(PARENT,{...origin,id:PARENT,type:4,name:'تقديم اداره'});
+  f.rooms.set(C,{...origin,parent_id:PARENT});
+  await f.click(control(f));
+  await f.message();
+  await f.message('+inrole');
+  assert.equal(f.writes().length,writes);
+  assert.equal(f.sent,first);
+});
+
+test('a source room recorded as support during the roster scan gets no result or error fallback',async t=>{
+  const f=await fixture(t);
+  const ticket=f.store.community.reserveTicket('isolated',A,'private','support','');
+  f.overrides.set(`GET /guilds/${G}/members`,()=>{
+    f.store.community.setChannel(ticket.id,C);
+    return f.response({code:50001,message:'Missing Access'},403);
+  });
+  await f.message();
+  assert.equal(f.members().length,1);
+  assert.deepEqual(f.writes(),[]);
+});
+
+test('a support room registration during final bot permission lookup prevents the Reply',async t=>{
+  const f=await fixture(t);
+  const ticket=f.store.community.reserveTicket('final-scope',A,'private','support','');
+  let checks=0;
+  f.overrides.set(`GET /guilds/${G}/members/${B}`,()=>{
+    if (++checks===2) f.store.community.setChannel(ticket.id,C);
+  });
+  await f.message();
+  assert.equal(checks,2);
+  assert.deepEqual(f.writes(),[]);
+});
+
+test('voice chat and a bot without channel Read Message History get no roster or usage fallback',async t=>{
+  const f=await fixture(t);
+  f.room({...origin,type:2});
+  await f.message();
+  await f.message('+inrole');
+  assert.deepEqual(f.writes(),[],'voice chat is not an ordinary text destination');
+  f.room({...origin,permission_overwrites:[{id:B,type:1,allow:'0',deny:'65536'}]});
+  await f.message();
+  await f.message('+inrole');
+  assert.deepEqual(f.writes(),[],'a Discord Reply requires Read Message History');
+  assert.equal(f.members().length,0);
+});
+
+test('an ordinary thread uses only its own Reply and thread send permission; a support parent disables pagination',async t=>{
+  const f=await fixture(t);
+  f.room({...origin,id:PARENT,permission_overwrites:[{id:B,type:1,allow:'0',deny:'2048'}]});
+  f.room({...origin,id:THREAD,type:11,parent_id:PARENT,thread_metadata:{archived:false,locked:false,auto_archive_duration:60,
+    archive_timestamp:'2026-11-27T00:00:00Z'}});
+  const invoking=await f.message(undefined,{channel:THREAD});
+  assert.deepEqual(f.writes().map(x=>[x.path,x.body.message_reference]),[[`/channels/${THREAD}/messages`,replyTo(invoking,THREAD)]]);
+  assert.deepEqual(await f.click(control(f)),{type:6});
+  expectPage(f.sent,'Actual Discord role',23,2,f.idList.slice(20));
+  const page=f.sent;
+  const ticket=f.store.community.reserveTicket('thread-parent',A,'private','support','');
+  f.store.community.setChannel(ticket.id,PARENT);
+  await f.click(control(f,0));
+  await f.message('+inrole',{channel:THREAD});
+  assert.equal(f.writes().length,2);
+  assert.equal(f.sent,page);
+  f.onlyRoom(THREAD);
 });
 
 test('the existing DM text help lists the usage only after fresh authorization and verified DM scope',async t=>{
@@ -174,6 +259,7 @@ test('the existing DM text help lists the usage only after fresh authorization a
   const {helpText,commands,parseChat}=require('../src/commands');
   await f.message('+help',{channel:D,guild:null});
   assert.match(f.posts[0].body.content,/\+inrole/u);
+  assert.match(f.posts[0].body.content,/القائمة تجيك برد على رسالتك في نفس الروم\./u);
   assert.ok(f.posts[0].body.content.startsWith(helpText));
   assert.ok(f.posts[0].body.content.length<=2000);
   f.actor=member(A);
@@ -183,7 +269,10 @@ test('the existing DM text help lists the usage only after fresh authorization a
   assert.equal(parseChat(`+inrole ${R}`),null);
   assert.throws(()=>f.store.shortcuts.add('INROLE','/ban',A),{status:409});
   assert.ok(!require('../src/custom-shortcuts').commandGuide(f.store.shortcuts).some(c=>c.name==='+inrole'));
-  f.noPublic();
+  f.onlyRoom(D);
+  f.actor=member(A,[M]);
+  await f.message('+help');
+  assert.equal(f.posts[2].body.content,helpText);
 });
 
 test('an empty managed role is an exact zero with disabled endpoints',async t=>{
@@ -192,7 +281,7 @@ test('an empty managed role is an exact zero with disabled endpoints',async t=>{
   expectPage(f.sent,'Actual Discord role',0,1,[]);
   assert.equal(await f.click(control(f)),undefined);
   assert.equal(f.patches().length,0);
-  f.noPublic();
+  f.onlyRoom();
 });
 
 test('@everyone includes every API member, even absent an explicit assignment',async t=>{
@@ -200,7 +289,7 @@ test('@everyone includes every API member, even absent an explicit assignment',a
   f.roster[1].user.bot=true;
   await f.message(`+inrole ${G}`);
   expectPage(f.sent,'@everyone',4,1,[A,...f.idList]);
-  f.noPublic();
+  f.onlyRoom();
 });
 
 test('owner and Administrator authorize without an explicit Manage Roles bit',async t=>{
@@ -214,7 +303,7 @@ test('owner and Administrator authorize without an explicit Manage Roles bit',as
   f.inventory[1].permissions=ADMIN;
   await f.message();
   assert.equal(f.posts.length,2);
-  f.noPublic();
+  f.onlyRoom();
 });
 
 test('stale gateway ownership and role permissions never authorize a nonmember or unprivileged actor',async t=>{
@@ -233,24 +322,27 @@ test('stale gateway ownership and role permissions never authorize a nonmember o
   assert.equal(f.posts.length,0);
   assert.equal(f.members().length,0);
   assert.ok(!f.calls.some(x=>x.path==='/users/@me/channels'));
-  f.noPublic();
+  f.onlyRoom();
 });
 
-test('bare and invalid syntax gets private usage only, without looking up a roster',async t=>{
+test('bare and invalid syntax gets a no-ping usage Reply without looking up a roster',async t=>{
   const f=await fixture(t);
   const inputs=['+inrole',`+inrole <@${R}>`,`+inrole 0${R}`,'+inrole 18446744073709551616',
     `+inrole ${R} ${M}`,`+inrole\n${R}`,'+inrole １２３４５６７８９０１２３４５６７８','+inrole 1'];
-  for (const input of inputs) await f.message(input);
+  const invocations=[];
+  for (const input of inputs) invocations.push(await f.message(input));
   assert.equal(f.posts.length,inputs.length);
-  for (const {body} of f.posts) {
+  for (const [index,{body}] of f.posts.entries()) {
     assert.match(body.content,/^الاستخدام:/u);
     assert.deepEqual(body.allowed_mentions,none);
+    assert.deepEqual(body.message_reference,replyTo(invocations[index]));
     assert.equal(body.embeds,undefined);
   }
-  await f.message(`+inrole ${OTHER}`);
+  const absent=await f.message(`+inrole ${OTHER}`);
   assert.match(f.posts.at(-1).body.content,/ما لقيت/u);
+  assert.deepEqual(f.posts.at(-1).body.message_reference,replyTo(absent));
   assert.equal(f.members().length,0);
-  f.noPublic();
+  f.onlyRoom();
 });
 
 test('nonmatching text and roulette DM select keep their existing interaction and XP paths',async t=>{
@@ -275,7 +367,7 @@ test('nonmatching text and roulette DM select keep their existing interaction an
   const roulette=await f.click('blgshop:equip',{component:3,message:gameMessage});
   assert.equal(roulette?.type,4); // Existing economy handler privately rejects the synthetic unknown item.
   assert.match(roulette.data.content,/إطار/u);
-  f.noPublic();
+  f.onlyRoom();
 });
 
 test('private ticket and newly moved application channel do not run the roster command',async t=>{
@@ -291,7 +383,7 @@ test('private ticket and newly moved application channel do not run the roster c
   await f.message();
   assert.equal(f.calls.filter(x=>x.path===`/guilds/${G}`).length,0);
   assert.equal(f.posts.length,0);
-  f.noPublic();
+  f.onlyRoom();
 });
 
 test('multi-page REST enumeration uses exact BigInt cursors and ignores the stale cache count',async t=>{
@@ -304,7 +396,7 @@ test('multi-page REST enumeration uses exact BigInt cursors and ignores the stal
   assert.deepEqual(f.members().map(x=>x.query),[{limit:'1000'},
     {limit:'1000',after:f.idList[998]},{limit:'1000',after:f.idList.at(-1)}]);
   assert.equal(f.client.guilds.cache.get(G).memberCount,9999);
-  f.noPublic();
+  f.onlyRoom();
 });
 
 test('fresh permissions after a roster GET prevent delivery and stop additional API pages',async t=>{
@@ -313,62 +405,77 @@ test('fresh permissions after a roster GET prevent delivery and stop additional 
   await f.message();
   assert.equal(f.members().length,1);
   assert.equal(f.posts.length,0);
-  f.noPublic();
+  f.onlyRoom();
 });
 
-test('revocation after the terminal API page still blocks the initial DM',async t=>{
+test('revocation after the terminal API page still blocks the initial Reply',async t=>{
   const f=await fixture(t);
   f.overrides.set(`GET /guilds/${G}/members`,({query})=>{if(query.after) f.actor=member(A);});
   await f.message();
   assert.equal(f.members().length,2);
   assert.equal(f.posts.length,0);
-  f.noPublic();
+  f.onlyRoom();
 });
 
-test('duplicate, damaged, out-of-order, missing and inaccessible roster responses fail privately without a total',async t=>{
+test('invalid or inaccessible roster responses send only an anchored generic error without a total',async t=>{
   const f=await fixture(t);
   const list=`GET /guilds/${G}/members`, rows=f.roster;
+  const invocations=[];
   for (const result of [[rows[0],rows[0]],[rows[1],rows[0]],[...rows.slice(1)],
     [rows[0],{...rows[1],user:null}],[rows[0],{...rows[1],roles:null}],
     [rows[0],{...rows[1],roles:[R,R]}],{members:rows},f.response({code:50001,message:'Missing Access'},403)]) {
     f.overrides.set(list,({query})=>query.after?[]:result);
-    await f.message();
+    invocations.push(await f.message());
   }
   f.overrides.set(list,({query})=>query.after?[rows.at(-1)]:rows);
-  await f.message(); // Duplicate across a page boundary.
+  invocations.push(await f.message()); // Duplicate across a page boundary.
   assert.equal(f.posts.length,9);
-  for (const {body} of f.posts) {
+  for (const [index,{body}] of f.posts.entries()) {
     assert.match(body.content,/تعذّر تأكيد/u);
+    assert.deepEqual(body.allowed_mentions,none);
+    assert.deepEqual(body.message_reference,replyTo(invocations[index]));
     assert.equal(body.embeds,undefined);
     assert.equal(body.components,undefined);
     assert.ok(!body.content.includes(R));
   }
-  f.noPublic();
+  f.onlyRoom();
 });
 
-test('closed DMs and malformed DM verification never fall back to a public message',async t=>{
+test('a deleted original causes no standalone post, retry, other channel send or DM',async t=>{
   const f=await fixture(t);
-  for (const dm of [{...f.dm,type:3},{...f.dm,guild_id:G},speaker(OTHER,D),{...f.dm,recipients:[user(A),user(OTHER)]}]) {
-    f.overrides.set('POST /users/@me/channels',()=>dm);
-    await f.message();
-  }
-  assert.equal(f.members().length,0);
-  f.overrides.delete('POST /users/@me/channels');
-  f.overrides.set(`POST /channels/${D}/messages`,()=>f.response({code:50007,message:'Cannot send messages to this user'},403));
-  await f.message();
-  assert.equal(f.calls.filter(x=>x.method==='POST' && x.path===`/channels/${D}/messages`).length,1);
+  f.overrides.set(`POST /channels/${C}/messages`,()=>f.response({code:10008,message:'Unknown Message'},404));
+  const invoking=await f.message();
+  assert.deepEqual(f.writes().map(x=>[x.path,x.body.message_reference]),[[`/channels/${C}/messages`,replyTo(invoking)]]);
   assert.equal(f.posts.length,0);
-  f.noPublic();
 });
 
-test('foreign, disabled, forged and malformed clicks cannot disclose a page',async t=>{
+test('an unverified source channel gets no roster or usage fallback',async t=>{
+  const f=await fixture(t);
+  f.rooms.delete(C); // Still present in the stale gateway cache.
+  await f.message();
+  await f.message('+inrole');
+  assert.deepEqual(f.writes(),[]);
+  assert.equal(f.members().length,0);
+});
+
+test('an expired legacy DM button is left untouched',async t=>{
+  const f=await fixture(t);
+  const id='lxr-inrole:legacy-fixture00:0:r';
+  const message={...inbound({id:POST,author:user(B,true),content:'',channel:D}),
+    components:[{type:1,components:[{type:2,style:1,custom_id:id,disabled:false,emoji:{name:'➡️'}}]}]};
+  assert.equal(await f.click(id,{message,channel:speaker(A,D)}),undefined);
+  assert.deepEqual(f.writes(),[]);
+});
+
+test('only the invoking manager on the exact bot Reply can turn the page',async t=>{
   const f=await fixture(t);
   await f.message();
   const next=control(f), old=f.sent;
+  f.addActor(OTHER,'200000000000000059');
   const group={id:OTHER,type:3,recipients:[user(A),user(O)]};
-  const cases=[[next,{user:user(OTHER)}],[next,{channel:group}],[next,{guild:G,channel:origin}],
+  const cases=[[next,{user:user(OTHER)}],[next,{channel:group}],[next,{guild:OTHER,channel:origin}],
     [next,{channel:speaker(A,OTHER)}],[next,{message:{...old,channel_id:OTHER}}],[next,{message:{...old,id:OTHER}}],
-    [next,{message:{...old,author:user(OTHER,true)}}],[next,{message:{...old,guild_id:G}}],
+    [next,{message:{...old,author:user(OTHER,true)}}],[next,{message:{...old,guild_id:OTHER}}],
     [next,{message:{...old,components:[]}}],[next,{application:OTHER}],[next,{component:3}],[control(f,0),{}],
     [next+'x',{}],['lxr-inrole:bogus',{}]];
   for (const [index,[id,opts]] of cases.entries()) assert.equal(await f.click(id,opts),undefined,`forgery ${index}`);
@@ -376,25 +483,23 @@ test('foreign, disabled, forged and malformed clicks cannot disclose a page',asy
   assert.equal(f.accept.size,0);
   assert.deepEqual(await f.click(next,{message:old}),{type:6});
   assert.equal(f.patches().length,1);
-  f.noPublic();
+  f.onlyRoom();
 });
 
-test('button authority and verified DM are checked fresh before any page is written',async t=>{
+test('Manage Roles revoked during the channel read and denied bot permission both block pagination',async t=>{
   const f=await fixture(t);
   await f.message();
-  let lookup=false;
-  f.overrides.set(`GET /channels/${D}`,()=>{lookup=true;f.actor=member(A);});
+  f.overrides.set(`GET /channels/${C}`,()=>{f.actor=member(A);});
   assert.deepEqual(await f.click(control(f)),{type:6});
-  assert.ok(lookup);
   assert.equal(f.patches().length,0);
   f.actor=member(A,[M]);
-  f.overrides.delete(`GET /channels/${D}`);
+  f.overrides.delete(`GET /channels/${C}`);
   assert.equal(await f.click(control(f)),undefined); // Invalidated on revocation.
   await f.message();
-  f.dm=speaker(OTHER,D);
+  f.rooms.set(C,{...origin,permission_overwrites:[{id:B,type:1,allow:'0',deny:'2048'}]});
   assert.deepEqual(await f.click(control(f)),{type:6});
   assert.equal(f.patches().length,0);
-  f.noPublic();
+  f.onlyRoom();
 });
 
 const gate=()=>{let resolve;const wait=new Promise(r=>{resolve=r;});return {wait,resolve};};
@@ -403,7 +508,7 @@ test('concurrent valid clicks claim once and an in-flight page edit cannot race 
   const f=await fixture(t,43);
   await f.message();
   const message=f.sent, next=control(f), entered=gate(), release=gate();
-  f.overrides.set(`GET /channels/${D}`,async()=>{entered.resolve();await release.wait;});
+  f.overrides.set(`GET /channels/${C}`,async()=>{entered.resolve();await release.wait;});
   const first=f.click(next,{message});
   await entered.wait;
   try {
@@ -414,7 +519,7 @@ test('concurrent valid clicks claim once and an in-flight page edit cannot race 
   assert.deepEqual(await first,{type:6});
   assert.equal(f.patches().length,1);
   expectPage(f.sent,'Actual Discord role',43,2,f.idList.slice(20,40));
-  f.noPublic();
+  f.onlyRoom();
 });
 
 test('replacement, expiry and capacity remove old button authority',async t=>{
@@ -437,7 +542,7 @@ test('replacement, expiry and capacity remove old button authority',async t=>{
   t.mock.method(Date,'now',()=>before+5*60_000+1_000);
   assert.equal(await f.click(control(f)),undefined);
   assert.equal(f.patches().length,0);
-  f.noPublic();
+  f.onlyRoom();
 });
 
 test('known application-room receipts keep a moved, renamed ticket private',async t=>{
@@ -446,22 +551,22 @@ test('known application-room receipts keep a moved, renamed ticket private',asyn
   await f.message();
   assert.equal(f.calls.filter(x=>x.path===`/guilds/${G}`).length,0);
   assert.equal(f.posts.length,0);
-  f.noPublic();
+  f.onlyRoom();
 });
 
 test('ambiguous transport writes do not retry or reactivate old pagination',async t=>{
   const f=await fixture(t);
-  const send=`POST /channels/${D}/messages`;
+  const send=`POST /channels/${C}/messages`;
   f.overrides.set(send,()=>f.response({message:'Synthetic failure'},503));
   await f.message();
-  assert.equal(f.calls.filter(x=>x.method==='POST' && x.path===`/channels/${D}/messages`).length,1);
+  assert.equal(f.calls.filter(x=>x.method==='POST' && x.path===`/channels/${C}/messages`).length,1);
   f.overrides.delete(send);
   await f.message();
-  const edit=`PATCH /channels/${D}/messages/${f.sent.id}`;
+  const edit=`PATCH /channels/${C}/messages/${f.sent.id}`;
   f.overrides.set(edit,()=>f.response({message:'Synthetic failure'},503));
   const next=control(f);
   assert.deepEqual(await f.click(next),{type:6});
   assert.equal(await f.click(next),undefined);
   assert.equal(f.patches().length,1);
-  f.noPublic();
+  f.onlyRoom();
 });

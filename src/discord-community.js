@@ -373,6 +373,6 @@ function communityGateway(readyGuild,context) {
   async function ticketPresent(id) {
     try { await getChannel(id); return true; } catch(err) { if (err instanceof RuleError && err.status===404) return false; throw err; }
   }
-  return {context,assertGenericChannel,memberAction,roomPermission,ticketRoom,ticketWriting,ticketPresent,syncClaim,announceClaim,editTicketRoom,validateSettings,destinations};
+  return {context,assertGenericChannel,assertGenericScope,memberAction,roomPermission,ticketRoom,ticketWriting,ticketPresent,syncClaim,announceClaim,editTicketRoom,validateSettings,destinations};
 }
 module.exports={communityGateway};

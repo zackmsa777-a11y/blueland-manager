@@ -34,17 +34,13 @@ function createMessageHandler({ authorize, service, store, publicOrigin, run, pa
     const resetting=isResetApply(text);
     const roster=inGuild && inRole && isInRole(text);
     if (inGuild && applicationTicketMessages && await applicationTicketMessages(message,text)) return;
+    if (roster) {
+      try { await inRole.text(message,text); } catch {} // No generic fallback.
+      return; // Roster owns fresh generic-scope checks for both its Reply and pagination.
+    }
     // Do not pass applicant text to any generic path, even if channel metadata is unavailable.
     if (inGuild && assertGenericChannel) {
-      try { await assertGenericChannel(message.channelId,{useCache:!resetting && !roster}); } catch { return; }
-    }
-    if (roster) {
-      try {
-        if (!assertGenericChannel || [message.channelId,message.channel?.parentId].some(id=>id &&
-          (store.community?.ticketByChannel?.(id) || store.applicationRooms?.read?.(id)))) return;
-        await inRole.text(message,text);
-      } catch {} // Never route failures to the public reply handler.
-      return;
+      try { await assertGenericChannel(message.channelId,{useCache:!resetting}); } catch { return; }
     }
     const reply = output => message.reply({...(typeof output==='string'?{content:output}:output),allowedMentions:{parse:[],repliedUser:false}});
     const greeting=salamReply && isSalamGreeting(text);

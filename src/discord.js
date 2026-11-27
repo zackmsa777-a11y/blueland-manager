@@ -143,8 +143,10 @@ function connectDiscord(store, env) {
         if (client!==connected) throw Error('Stale roster gateway');
         return readyGuild();
       };
-      // Isolate private sends from other features' queues and never automatically retry a write.
-      const roster=createInRole({rest:createApplicationMutationRest(token),readyGuild:readyRosterGuild,botId});
+      // Isolate roster replies from other features' queues and never automatically retry a write.
+      const roster=createInRole({rest:createApplicationMutationRest(token),readyGuild:readyRosterGuild,botId,
+        assertGenericScope:gateway.assertGenericScope,
+        isTicketRoom:id=>Boolean(store.community.ticketByChannel(id) || store.applicationRooms.read(id))});
       inRole=roster;
       const onMessage=createMessageHandler({authorize:community.dashboard,service,store,publicOrigin:env.PUBLIC_ORIGIN,run,parse:parseChat,shortcuts,
         ticketMessages:tickets.text,assertGenericChannel:gateway.assertGenericChannel,inRole:roster,

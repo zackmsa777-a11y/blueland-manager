@@ -85,7 +85,7 @@ const helpText=[
 ].join('\n');
 const isResetApply=text=>/^\+rs[ \t]+apply(?=$|\s)/u.test(text);
 const inRoleCommand={name:'inrole',usage:'الاستخدام: `+inrole معرّف_الرول` أو `+inrole @الرول`.',
-  help:'إدارة الرولات · `+inrole معرّف_الرول` أو `+inrole @الرول` داخل السيرفر؛ القائمة تصلك في الخاص.'};
+  help:'إدارة الرولات · `+inrole معرّف_الرول` أو `+inrole @الرول` داخل السيرفر؛ القائمة تجيك برد على رسالتك في نفس الروم.'};
 const isInRole=text=>/^\+inrole(?=$|\s)/u.test(text);
 function parseChat(text) {
   if (isResetApply(text)) {
