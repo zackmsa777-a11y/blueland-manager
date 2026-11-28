@@ -1,7 +1,7 @@
 'use strict';
 
 const { catalog, roles, RuleError, parsePromotion, compareRoles } = require('./ladder');
-const { isResetApply,isInRole } = require('./commands');
+const { isResetApply,isInRole,isF7s } = require('./commands');
 const APPLY_RESET_ROLE='1574012921090932836';
 const canResetApplication=(context,actorId)=>{
   const user=context?.actor, floor=context?.roles?.get(APPLY_RESET_ROLE);
@@ -24,13 +24,17 @@ const {createDashImageLoader}=require('./dash-image');
 const {createAcceptMember}=require('./accept-member');
 
 function createMessageHandler({ authorize, service, store, publicOrigin, run, parse, shortcuts, ticketMessages, acceptOverwrites, assertGenericChannel,
-  applicationResetContext, resetApplication, applicationTicketMessages, inRole, checkCommandRole, loadDashImage=createDashImageLoader() }) {
+  applicationResetContext, resetApplication, applicationTicketMessages, inRole, f7s, checkCommandRole, loadDashImage=createDashImageLoader() }) {
   const acceptMember=createAcceptMember({store,overwrites:acceptOverwrites});
   return async function onMessage(message) {
     if (message.author.bot || message.webhookId) return;
     const inGuild=message.inGuild();
     if (inGuild && message.guildId!==catalog.guildId) return;
     const text = message.content?.trim() || '';
+    if (isF7s(text)) {
+      if (inGuild && f7s) await f7s.text(message,text);
+      return; // No ticket, generic dispatch, shortcut, or XP fallback.
+    }
     const resetting=isResetApply(text);
     const roster=inGuild && inRole && isInRole(text);
     if (inGuild && applicationTicketMessages && await applicationTicketMessages(message,text)) return;
@@ -150,7 +154,7 @@ function createMessageHandler({ authorize, service, store, publicOrigin, run, pa
               try { await message.author.send({content:answer,allowedMentions:{parse:[]}}); }
               catch { throw new RuleError('استخدم /warnings لعرض السجل برد خاص أو افتح الرسائل الخاصة.'); }
               await reply('أرسلت سجل التحذيرات في الخاص.');
-            } else await reply(answer);
+            } else await reply(command.action==='help' && f7s ? await f7s.help(message,answer) : answer);
           }
         }
         return;

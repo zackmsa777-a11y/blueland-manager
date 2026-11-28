@@ -87,6 +87,9 @@ const isResetApply=text=>/^\+rs[ \t]+apply(?=$|\s)/u.test(text);
 const inRoleCommand={name:'inrole',usage:'الاستخدام: `+inrole معرّف_الرول` أو `+inrole @الرول`.',
   help:'إدارة الرولات · `+inrole معرّف_الرول` أو `+inrole @الرول` داخل السيرفر؛ القائمة تجيك برد على رسالتك في نفس الروم.'};
 const isInRole=text=>/^\+inrole(?=$|\s)/u.test(text);
+const f7sCommand={name:'f7s',usage:'**الاستخدام:** `+f7s @العضو` أو `+f7s معرّف_العضو`.',
+  help:'نشاط الأعضاء · `+f7s @العضو` أو `+f7s معرّف_العضو` — صورة برد في نفس الروم، يراها من يقدر يشوف الروم.'};
+const isF7s=text=>/^\+f7s(?=$|\s)/u.test(text);
 function parseChat(text) {
   if (isResetApply(text)) {
     const match=/^\+rs[ \t]+apply[ \t]+<@!?([1-9]\d{16,19})>$/u.exec(text);
@@ -252,4 +255,4 @@ async function registerCommands(client,guildId,definitions=commands) {
   const live=await client.rest.get(endpoint);
   return definitions.filter(def=>live.some(c=>JSON.stringify(shape(c))===JSON.stringify(shape(def)))).length;
 }
-module.exports={commands,chatAliases,helpText,isResetApply,inRoleCommand,isInRole,parseChat,commandRunner,interactionInput,registerCommands};
+module.exports={commands,chatAliases,helpText,isResetApply,inRoleCommand,isInRole,f7sCommand,isF7s,parseChat,commandRunner,interactionInput,registerCommands};

@@ -16,9 +16,10 @@ const { createLxrStart } = require('./lxr-start');
 const { createLxrApply } = require('./lxr-apply');
 const { createApplicationTickets,createApplicationManager,createApplicationMutationRest } = require('./lxr-apply-tickets');
 const {createInRole}=require('./lxr-inrole');
+const {createF7s}=require('./lxr-f7s');
 
 function connectDiscord(store, env) {
-  let client, api, timer, applicationChannelRest, applicationMutationRest, inRole, recovering = false, cachedDirectory, refresh, validUntil = 0, attemptedToken;
+  let client, api, timer, applicationChannelRest, applicationMutationRest, inRole, f7s, recovering = false, cachedDirectory, refresh, validUntil = 0, attemptedToken;
   let connection = { code: 'offline', text: 'بانتظار ربط البوت' };
   const allowed = new Set((env.PROMOTER_ROLE_IDS || '').split(',').map(s => s.trim()).filter(Boolean));
   const botId = env.DISCORD_APPLICATION_ID || catalog.botId;
@@ -155,8 +156,13 @@ function connectDiscord(store, env) {
         assertGenericScope:gateway.assertGenericScope,
         isTicketRoom:id=>Boolean(store.community.ticketByChannel(id) || store.applicationRooms.read(id))});
       inRole=roster;
+      const activityCard=createF7s({client:connected,rest:createApplicationMutationRest(token),createWriter:()=>createApplicationMutationRest(token),
+        readyGuild:()=>{if (client!==connected) throw Error('Stale activity-card gateway');return readyGuild();},botId,
+        assertGenericScope:gateway.assertGenericScope,isTicketRoom:id=>Boolean(store.community.ticketByChannel(id) || store.applicationRooms.read(id)),
+        db:store.community});
+      f7s=activityCard;
       const onMessage=createMessageHandler({authorize:community.dashboard,service,store,publicOrigin:env.PUBLIC_ORIGIN,run,parse:parseChat,shortcuts,checkCommandRole,
-        ticketMessages:tickets.text,assertGenericChannel:gateway.assertGenericChannel,inRole:roster,
+        ticketMessages:tickets.text,assertGenericChannel:gateway.assertGenericChannel,inRole:roster,f7s:activityCard,
         applicationResetContext:context,resetApplication:lxrApply.reset,applicationTicketMessages:applicationManager.text});
       const readyTempGuild=()=>{
         if (client!==connected) throw Error('Stale voice gateway');
@@ -227,6 +233,7 @@ function connectDiscord(store, env) {
       client.on(api.Events.ClientReady, () => {
         if (client.user.id !== botId) {
           connection = { code: 'error', text: 'التوكن يخص تطبيق ديسكورد مختلفًا' };
+          activityCard.close();
           client.destroy();
           return;
         }
@@ -265,6 +272,7 @@ function connectDiscord(store, env) {
       clearInterval(dailyTopTimer);
       voice.reset();
       inRole?.close();
+      f7s?.close();
       client?.destroy();
       applicationChannelRest=undefined;
       let message = 'تعذّر اتصال البوت. راجع التوكن والاتصال بديسكورد.';
@@ -304,6 +312,7 @@ function connectDiscord(store, env) {
     if (config.DISCORD_BOT_TOKEN?.trim() && config.DISCORD_BOT_TOKEN.trim()!==attemptedToken) {
       clearInterval(timer);
       inRole?.close();
+      f7s?.close();
       await client?.destroy();
       client=undefined;
       applicationChannelRest=undefined;
@@ -313,7 +322,7 @@ function connectDiscord(store, env) {
     }
   }
   return { start, loadLocalConfig, status, authorize, dashboardAccess:community.dashboard, service, community, destinations:gateway.destinations, directory,checkCommandRole,commandRoleOptions,
-    close() { clearInterval(timer); inRole?.close(); applicationChannelRest=undefined; client?.destroy(); } };
+    close() { clearInterval(timer); inRole?.close(); f7s?.close(); applicationChannelRest=undefined; client?.destroy(); } };
 }
 
 module.exports = { connectDiscord };

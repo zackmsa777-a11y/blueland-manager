@@ -1,7 +1,7 @@
 'use strict';
 
 const {RuleError, parseRankChangeArgs} = require('./ladder');
-const {commands, chatAliases, parseChat, inRoleCommand} = require('./commands');
+const {commands, chatAliases, parseChat, inRoleCommand, f7sCommand} = require('./commands');
 const {commandName, subcommandName} = require('./command-aliases');
 const {parseTop}=require('./activity-top');
 const clean = value => String(value ?? '').normalize('NFKC').trim().replace(/\s+/gu,' ');
@@ -41,6 +41,7 @@ register({name:'+تخفيض',action:'demote',cat:'roles',access:'المالك أ
 for(const group of ['الجميع','البوتات'])register({name:'+ر '+group,action:'bulk-role',audience:group==='البوتات'?'bots':'members',cat:'roles',access:'مالك السيرفر فقط',desc:'يوزع رول على '+group+' بحسب الأهلية.',chat:['+ر '+group],example:`+ر ${group} @الرول`,note:'لو البوت طلب تأكيد للتوزيع، استخدم الأمر الأصلي اللي يبعته في نفس الروم.',options:[{name:'role',required:true,description:'منشن الرول أو معرّفه'}]});
 const reserved=new Set([...catalog.values()].flatMap(c=>[c.name,c.alias,...c.chat].filter(Boolean).map(n=>keyOf(n.replace(/^[+/]/,'')))));
 reserved.add(inRoleCommand.name); // Reserve the name without making the staff-only command an alias target or a public listing.
+const activityCardKey=key=>key===f7sCommand.name || key.startsWith(f7sCommand.name+' ');
 const defaults=[{phrase:'تف',command:'/ban'},{phrase:'برا',command:'/kick'}];
 function openShortcuts(db) {
   db.exec('CREATE TABLE IF NOT EXISTS command_shortcuts (key TEXT PRIMARY KEY, phrase TEXT NOT NULL, command TEXT NOT NULL, actor TEXT NOT NULL, created INTEGER NOT NULL)');
@@ -48,13 +49,13 @@ function openShortcuts(db) {
   for (const row of defaults) insert.run(keyOf(row.phrase),row.phrase,row.command,'default',0);
   const rows=db.prepare('SELECT key, phrase, command FROM command_shortcuts ORDER BY length(key) DESC, key');
   const count=db.prepare('SELECT count(*) AS n FROM command_shortcuts');
-  function list(){return rows.all().filter(row=>catalog.has(row.command)).map(({phrase,command})=>({phrase,command}));}
+  function list(){return rows.all().filter(row=>catalog.has(row.command) && !activityCardKey(row.key)).map(({phrase,command})=>({phrase,command}));}
   function add(phrase,command,actor){
     if (typeof phrase!=='string'||typeof command!=='string'||!catalog.has(command)) throw new RuleError('اختَر أمرًا موجودًا في الدليل.');
     phrase=clean(phrase);
     if (phrase.length>40||!/^\p{L}[\p{L}\p{M}\p{N}]*(?:[ _-][\p{L}\p{M}\p{N}]+)*$/u.test(phrase)) throw new RuleError('اكتب حرفًا أو كلمة أو عبارة (حتى 40 حرفًا) بدون + أو / أو منشن.');
     const key=keyOf(phrase);
-    if (reserved.has(key) || parseTop(key)) throw new RuleError('الاسم مستخدم في أمر حالي.',409);
+    if (reserved.has(key) || activityCardKey(key) || parseTop(key)) throw new RuleError('الاسم مستخدم في أمر حالي.',409);
     if (count.get().n>=200) throw new RuleError('وصلت للحد الأقصى للاختصارات.',409);
     if (!insert.run(key,phrase,command,actor,Date.now()).changes) throw new RuleError('الاختصار ده مستخدم بالفعل.',409);
     return {phrase,command};
@@ -77,6 +78,7 @@ function openShortcuts(db) {
       prefixes.set(key,end);
     }
     for (const item of rows.all()) {
+      if (activityCardKey(item.key)) continue; // A legacy row cannot override the reserved trigger.
       const spec=catalog.get(item.command), end=prefixes.get(item.key);
       if(end===undefined||!spec)continue;
       const args=text.slice(end).trim();

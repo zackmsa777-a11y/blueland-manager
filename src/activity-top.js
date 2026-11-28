@@ -56,6 +56,16 @@ function createActivityStore(db) {
   const voiceRows=db.prepare(`SELECT member,SUM(voice_ms) AS ms FROM activity_daily
     WHERE day BETWEEN ? AND ? AND voice_ms>0 GROUP BY member ORDER BY ms DESC,member LIMIT ?`);
   const graph=db.prepare('SELECT day,SUM(messages) AS count FROM activity_daily WHERE day BETWEEN ? AND ? GROUP BY day');
+  const memberWindow=db.prepare(`WITH totals AS (
+    SELECT member,SUM(messages) AS messages,SUM(voice_ms) AS voice FROM activity_daily
+    WHERE day BETWEEN ? AND ? GROUP BY member
+  ), ranks AS (
+    SELECT CASE WHEN MAX(target.messages)>0 THEN 1+COUNT(CASE WHEN other.messages>target.messages THEN 1 END) END AS messageRank,
+           CASE WHEN MAX(target.voice)>0 THEN 1+COUNT(CASE WHEN other.voice>target.voice THEN 1 END) END AS voiceRank
+    FROM totals AS target CROSS JOIN totals AS other WHERE target.member=?
+  )
+  SELECT daily.day,daily.messages,daily.voice_ms,ranks.messageRank,ranks.voiceRank
+    FROM ranks LEFT JOIN activity_daily AS daily ON daily.member=? AND daily.day BETWEEN ? AND ? ORDER BY daily.day`);
   function transaction(work) {
     db.exec('BEGIN');
     try {work();db.exec('COMMIT');} catch(err) {db.exec('ROLLBACK');throw err;}
@@ -86,7 +96,24 @@ function createActivityStore(db) {
       voice:mode==='text'?[]:voiceRows.all(start,today,size).map(r=>({...r})),
       chart:history?Array.from({length:7},(_,i)=>({day:today-6+i,count:history.get(today-6+i)??0})):[]};
   }
-  return {addXp,addVoice,activityTop};
+  function memberActivity(member,now) {
+    const today=dayOf(now), start=today-13;
+    const rows=memberWindow.all(start,today,member,member,start,today);
+    const byDay=new Map(rows.map(row=>[row.day,row]));
+    const days=Array.from({length:14},(_,i)=>{
+      const day=start+i, row=byDay.get(day);
+      // A row records a message count, but voice_ms defaults to zero even when no voice was observed.
+      return {day,messages:row?.messages??null,voiceMs:row?.voice_ms>0?row.voice_ms:null};
+    });
+    const sum=(days,key)=>days.some(d=>d[key]!==null)?days.reduce((total,d)=>total+(d[key]??0),0):null;
+    const windows=[1,7,14].map(length=>{
+      const slice=days.slice(-length);
+      return {length,messages:sum(slice,'messages'),voiceMs:sum(slice,'voiceMs')};
+    });
+    const [{messageRank,voiceRank}]=rows;
+    return {days,windows,messageRank,voiceRank};
+  }
+  return {addXp,addVoice,activityTop,memberActivity};
 }
 function createVoiceActivity(db,now=Date.now) {
   const observed=new Map();
