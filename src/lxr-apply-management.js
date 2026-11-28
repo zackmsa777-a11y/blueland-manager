@@ -15,7 +15,7 @@ const unknownChannel=error=>error instanceof DiscordAPIError && error.status===4
 const rejected=error=>error instanceof RateLimitError || (error instanceof DiscordAPIError && ((error.status===403 && [50001,50013].includes(error.code)) ||
   (error.status===400 && error.code===50035) || unknownChannel(error)));
 
-function createApplicationManager({readyGuild,state,getChannelWriteRest,now=Date.now},verification) {
+function createApplicationManager({readyGuild,state,getChannelWriteRest,checkCommandRole,now=Date.now},verification) {
   const {GUILD,BOT,DESTINATIONS,TOPIC_PREFIX,snowflake,within,initialRoom,matchesRoom,managedAcl,
     isApplicationDestination,exactAcl,matchesStoredReceipt,verifyMessage,locateRoom}=verification;
   const byParent=new Map(Object.entries(DESTINATIONS).map(([kind,{parent}])=>[parent,kind]));
@@ -116,6 +116,7 @@ function createApplicationManager({readyGuild,state,getChannelWriteRest,now=Date
     try {
       const room=await readRoom(rest,channel),identity=roomKey(room,channel);
       if (!identity) deny();
+      if (slashActions.has(action)) await checkCommandRole?.(actor,{action:'ticket',sub:action});
       const reauthorize=()=>authorize(rest,actor,identity.kind,['add','remove'].includes(action));
       const owner=await reauthorize();
       const {key,current}=await load(rest,room,channel,identity);

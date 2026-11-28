@@ -9,7 +9,7 @@ const addIcon=(target,name)=>{
   const ns='http://www.w3.org/2000/svg',svg=document.createElementNS(ns,'svg'),ref=document.createElementNS(ns,'use');
   svg.setAttribute('class','guide-icon');svg.setAttribute('aria-hidden','true');ref.setAttribute('href','/assets/icons.svg#'+name);svg.append(ref);target.prepend(svg);
 };
-let rows=[], selected='/promote', category='all', canEdit=false;
+let rows=[], selected='/promote', category='all', canEdit=false, canEditRoles=false, roleOptions=[];
 const message=$('#guide-status');
 async function api(path,body){
   const resp=await fetch(path,{cache:'no-store',credentials:'same-origin',...(body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})});
@@ -27,12 +27,52 @@ function copyButton(value,status) {
     catch{status.textContent='انسخ النص يدويًا: '+value;}
   });b.setAttribute('aria-label','نسخ '+value);b.append(chip(value));return b;
 }
+function roleSection(command) {
+  const box=section('رول استخدام الأمر');
+  const missing=id=>'رول غير متاح ('+id+')';
+  if (!canEditRoles) {
+    box.append(make('p',command.roleId?(command.roleName || missing(command.roleId)):'حسب الصلاحيات الأصلية','guide-muted'));
+    return box;
+  }
+  const form=make('form',null,'command-role-form');
+  const label=make('label','الرول المطلوب');label.htmlFor='command-role';
+  const select=make('select');select.id=label.htmlFor;
+  select.add(new Option('بدون شرط رول إضافي',''));
+  const seen=new Set(),duplicates=new Set();
+  for (const role of roleOptions) {if (seen.has(role.name)) duplicates.add(role.name);seen.add(role.name);}
+  for (const role of roleOptions) select.add(new Option(duplicates.has(role.name)?role.name+' · '+role.id:role.name,role.id));
+  if (command.roleId && !roleOptions.some(role=>role.id===command.roleId))
+    select.add(new Option(missing(command.roleId),command.roleId));
+  select.value=command.roleId || '';
+  const save=make('button','حفظ الرول','action-primary');save.type='submit';save.disabled=true;
+  const status=make('p',null,'guide-message');status.setAttribute('role','status');
+  const changed=()=>{save.disabled=(select.value || null)===command.roleId;};
+  select.addEventListener('change',changed);
+  form.onsubmit=async event=>{
+    event.preventDefault();
+    if (save.disabled) return;
+    const roleId=select.value || null;
+    save.disabled=true;select.disabled=true;status.textContent='جارٍ الحفظ…';
+    try {
+      const result=await api('/api/command-roles',{command:command.name,roleId,previousRoleId:command.roleId});
+      if (result.command!==command.name || result.roleId!==roleId) throw new Error('تعذّر تأكيد حفظ الرول.');
+      command.roleId=roleId;command.roleName=roleOptions.find(r=>r.id===roleId)?.name ?? null;
+      status.textContent=roleId?'حُفظ شرط الرول.':'أُزيل شرط الرول.';
+    } catch(err) {status.textContent=err.message;}
+    finally {select.disabled=false;changed();}
+  };
+  form.setAttribute('aria-label','تعديل رول استخدام الأمر');
+  form.append(label,select,save);
+  box.append(form,make('p','يلزم الرول مع صلاحيات الأمر الأصلية، ويشمل الاختصارات.','guide-muted'),status);
+  return box;
+}
 function showDetail(c){
   const panel=$('#guide-detail');panel.replaceChildren();panel.hidden=!c;if(!c)return;
   const box=make('div',null,'detail-main');
   const top=make('div',null,'detail-top');top.append(make('p','تفاصيل الأمر','guide-eyebrow'),chip(c.name));
   const heading=make('h2',c.desc);heading.id='guide-detail-title';heading.tabIndex=-1;
   box.append(top,heading,make('p',c.access,'guide-muted'));
+  box.append(roleSection(c));
   const status=make('p',null,'guide-message');status.setAttribute('role','status');
   if(c.note||c.example) {
     const guide=section('طريقة الاستخدام');if(c.note)guide.append(make('p',c.note,'guide-muted'));
@@ -112,6 +152,6 @@ function draw(){
   $('#guide-search').addEventListener('input',()=>{if($('#guide-search').value.trim())category='all';draw()});
   const workspace=$('#guide-workspace');
   document.addEventListener('keydown',e=>{if(!workspace.hidden&&e.key==='/'&&!e.ctrlKey&&!e.metaKey&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)){e.preventDefault();$('#guide-search').focus()}});
-  try{const data=await api('/api/command-guide');rows=data.commands;canEdit=data.canEdit;draw();workspace.hidden=false;message.textContent=''}
+  try{const data=await api('/api/command-guide');rows=data.commands;canEdit=data.canEdit;canEditRoles=data.canEditRoles;roleOptions=data.roleOptions || [];draw();workspace.hidden=false;message.textContent=''}
   catch(err){message.textContent=err.message;if(err.status===401){const link=make('a','دخول الإدارة','button primary');link.href='/';message.append(link)}}
 })();

@@ -9,6 +9,7 @@ const { preview, RuleError } = require('./ladder');
 const { openStore } = require('./store');
 const { connectDiscord } = require('./discord');
 const { exportCsv } = require('./directory');
+const {canEditCommandRoles}=require('./command-roles');
 const root = path.resolve(__dirname, '..');
 const mime = { '.html':'text/html; charset=utf-8', '.js':'text/javascript; charset=utf-8', '.css':'text/css; charset=utf-8',
   '.png':'image/png', '.webp':'image/webp', '.woff2':'font/woff2', '.svg':'image/svg+xml' };
@@ -89,6 +90,12 @@ function createApp({ store, discord, publicOrigin = '' }) {
           return json({ ok:true });
         }
         const viewer=await staff();
+        if (route==='/api/command-roles') {
+          if (!canEditCommandRoles(actor)) throw new RuleError('تعديل رول الأمر متاح لـLux وRust فقط.',403);
+          if (input.roleId!==null && !(await discord.commandRoleOptions()).some(r=>r.id===input.roleId))
+            throw new RuleError('هذا الرول غير متاح. حدّث قائمة رولات السيرفر.',400);
+          return json(store.commandRoles.save(actor,input.command,input.roleId,input.previousRoleId));
+        }
         if (route === '/api/command-shortcuts') {
           if (!viewer.rights?.config) throw new RuleError('إضافة الاختصارات تحتاج صلاحية إدارة السيرفر.',403);
           await discord.community.manager(actor);
@@ -98,10 +105,12 @@ function createApp({ store, discord, publicOrigin = '' }) {
         if (route === '/api/staff/ticket') return json(await discord.community.ticketAction(actor,input.id,input.action));
         if (route === '/api/staff/settings') return json(await discord.community.saveSettings(actor,input));
         if (route === '/api/member-preview') {
+          await discord.checkCommandRole?.(actor,{action:'promote'});
           const result = await discord.service.preview(actor, memberId(input.target));
           return json({ ...result, requestId: randomUUID() });
         }
         if (route === '/api/promote') {
+          await discord.checkCommandRole?.(actor,{action:'promote'});
           if (!/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(input.requestId) ||
             !(input.expectedFrom === null || /^\d{17,20}$/.test(input.expectedFrom))) throw new RuleError('اعرض معاينة الترقية أولًا.');
           return json(await discord.service.execute({ id:'web:' + actor + ':' + input.requestId, actor,
@@ -122,11 +131,16 @@ function createApp({ store, discord, publicOrigin = '' }) {
         const viewer=home ? await staff() : null;
         if (route==='/api/command-guide') {
           const current=viewer || (actor ? await staff() : null);
+          const editRoles=Boolean(current && canEditCommandRoles(actor));
+          const required=store.commandRoles.list();
+          const roleOptions=editRoles || (current && required.size) ? await discord.commandRoleOptions() : [];
+          const roleNames=new Map(roleOptions.map(r=>[r.id,r.name]));
           const commands = require('./custom-shortcuts').commandGuide(store.shortcuts).map(command => ({
             ...command, desc:dashboardCopy(command.desc),
+            roleId:required.get(command.name) ?? null,roleName:roleNames.get(required.get(command.name)) ?? null,
             options:command.options.map(option => ({ ...option, description:dashboardCopy(option.description) }))
           }));
-          return json({commands,canEdit:Boolean(current?.rights?.config)});
+          return json({commands,canEdit:Boolean(current?.rights?.config),canEditRoles:editRoles,roleOptions:editRoles?roleOptions:[]});
         }
         if (route==='/api/commands') {
           const {commands}=require('./commands');

@@ -115,6 +115,7 @@ function openStore(file) {
     community: openCommunityStore(db),
     tempVoice: require('./lxr-temp-voice-store').openTempVoiceStore(db),
     shortcuts: require('./custom-shortcuts').openShortcuts(db),
+    commandRoles: require('./command-roles').openCommandRoles(db),
     roulette: require('./roulette-shop').openRouletteShop(db),
     byId,
     pending(target) {

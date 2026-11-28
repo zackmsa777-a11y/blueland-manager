@@ -21,7 +21,7 @@ const playerAvatar = i => {
   return i.member?.displayAvatarURL?.(options) || i.user.displayAvatarURL?.(options);
 };
 
-function createDiscordGames(economy) {
+function createDiscordGames(economy,checkCommandRole) {
   const rooms = new Map();
   const active = game => rooms.get(game.room) === game;
 
@@ -345,6 +345,11 @@ function createDiscordGames(economy) {
     const control = (i.isButton() || i.isStringSelectMenu()) && i.customId.startsWith('blg:');
     if (!opening && !control && !shop) return false;
     try {
+      if (opening || shop) {
+        const item=opening?kind:key.slice('blgshop:'.length);
+        const sub=item==='buy'?'shop':item==='equip'?'bag':item;
+        await checkCommandRole?.(i.user.id,{action:'game',sub});
+      }
       if (shop) await economyAction(i, key.slice('blgshop:'.length));
       else await (opening ? open(i, kind) : component(i));
     } catch (err) {
@@ -357,6 +362,7 @@ function createDiscordGames(economy) {
   }
 
   async function openShortcut(message,kind,lobbyMs) {
+    await checkCommandRole?.(message.author.id,{action:'game',sub:kind});
     if (kind==='shop'||kind==='bag') {
       if (!economy) throw new RuleError('متجر الروليت غير متاح حاليًا.');
       try {await message.author.send({...shopPanel(kind,economy.profile(message.author.id)),allowedMentions:{parse:[]}});}

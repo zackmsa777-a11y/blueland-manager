@@ -3,6 +3,7 @@
 const {PermissionFlagsBits: P} = require('discord.js');
 const {catalog,roles,compareRoles,planPromotion,RuleError} = require('./ladder');
 const {memberAccess} = require('./promotions');
+const {canEditCommandRoles}=require('./command-roles');
 const {staffGrade,progress} = require('./ticket-points');
 const ticketUi=require('./ticket-ui');
 
@@ -50,7 +51,7 @@ function verifyTarget(ctx) {
   }
 }
 
-function createCommunity(store, gateway, promotions) {
+function createCommunity(store, gateway, promotions, checkCommandRole) {
   const db=store.community;
   const running=new Map();
   async function exclusive(key,work) {
@@ -116,7 +117,7 @@ function createCommunity(store, gateway, promotions) {
     const tickets=legacyTickets || technicalTickets || staffComplaints;
     const cases=config || permits(ctx,ctx.actor,P.ModerateMembers) || ctx.actor.roles.includes(helper['#warn/unwarn']);
     const grade=staffGrade(ctx.actor.roles);
-    if (ctx.actor.bot || !(grade || review || tickets || cases || config)) throw new RuleError('دخول الطاقم يحتاج إلى رول مخوّل في BlueLand.',403);
+    if (ctx.actor.bot || !(grade || review || tickets || cases || config || canEditCommandRoles(actor))) throw new RuleError('دخول الطاقم يحتاج إلى رول مخوّل في BlueLand.',403);
     return {id:actor,name:ctx.actor.name,points:progress(db,actor,grade,ctx.ownerId),
       rights:{review,config,tickets,cases,legacyTickets,legacyClaim,complaintTickets,staffComplaints,technicalTickets,ticketAdmin:permits(ctx,ctx.actor,0n)}};
   }
@@ -146,6 +147,7 @@ function createCommunity(store, gateway, promotions) {
   async function review(actor,id,decision,note) {
     await reviewer(actor);
     if (!['approve','reject'].includes(decision)) throw new RuleError('قرار المراجعة غير صالح.');
+    await checkCommandRole?.(actor,{action:'request',sub:decision});
     id=rowId(id);
     return exclusive('request:'+id,async()=>{
       const row=db.request(id);
@@ -184,6 +186,7 @@ function createCommunity(store, gateway, promotions) {
     return db.ticket(row.id);
   }
   async function openTicket(actor,delivery,subject,kind='legacy',details='') {
+    await checkCommandRole?.(actor,{action:'ticket',sub:'create'});
     if (kind!=='legacy' && !Object.hasOwn(require('./ticket-ui').kinds,kind)) throw new RuleError('اختر نوع التذكرة من اللوحة.');
     const ctx=await gateway.context(actor);
     if (ctx.actor.bot) throw new RuleError('فتح التذاكر مخصص للأعضاء.',403);
@@ -244,6 +247,7 @@ function createCommunity(store, gateway, promotions) {
     } finally { awarding.delete(member); }
   }
   async function ticketAction(actor,id,action,{noticeId}={}) {
+    await checkCommandRole?.(actor,{action:'ticket',sub:action});
     const row=db.ticket(rowId(id));
     if (!row) throw new RuleError('التذكرة غير موجودة.',404);
     const ctx=action==='close' && actor===row.owner ? null : await ticketStaff(actor,row);

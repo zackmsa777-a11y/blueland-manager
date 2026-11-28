@@ -137,4 +137,4 @@ function commandGuide(shortcuts){
     options:options.map(o=>({name:o.name,label:names[o.name]||o.name,description:o.description,required:!!o.required,min:o.min_value,max:o.max_value,minLength:o.min_length,maxLength:o.max_length,choices:o.choices})),
     custom:custom.filter(a=>a.command===name).map(a=>a.phrase)}));
 }
-module.exports={openShortcuts,parseShortcut,commandGuide,usage};
+module.exports={openShortcuts,parseShortcut,commandGuide,usage,isGuideCommand:name=>catalog.has(name)};

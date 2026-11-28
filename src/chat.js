@@ -24,7 +24,7 @@ const {createDashImageLoader}=require('./dash-image');
 const {createAcceptMember}=require('./accept-member');
 
 function createMessageHandler({ authorize, service, store, publicOrigin, run, parse, shortcuts, ticketMessages, acceptOverwrites, assertGenericChannel,
-  applicationResetContext, resetApplication, applicationTicketMessages, inRole, loadDashImage=createDashImageLoader() }) {
+  applicationResetContext, resetApplication, applicationTicketMessages, inRole, checkCommandRole, loadDashImage=createDashImageLoader() }) {
   const acceptMember=createAcceptMember({store,overwrites:acceptOverwrites});
   return async function onMessage(message) {
     if (message.author.bot || message.webhookId) return;
@@ -128,6 +128,7 @@ function createMessageHandler({ authorize, service, store, publicOrigin, run, pa
         return;
       }
       if (text === '+لوحة') {
+        await checkCommandRole?.(message.author.id,{action:'dashboard'});
         await authorize(message.author.id);
         const code = store.loginCode(message.author.id);
         try {
@@ -155,6 +156,7 @@ function createMessageHandler({ authorize, service, store, publicOrigin, run, pa
         return;
       }
       const { target, count } = promotion;
+      await checkCommandRole?.(message.author.id,{action:'promote'});
       const result = await service.execute({ id:'discord:' + message.id, actor:message.author.id, target, count, source:'discord' });
       const old = roles.get(result.plan.from)?.label || 'خارج السلّم';
       const next = roles.get(result.plan.to).label;

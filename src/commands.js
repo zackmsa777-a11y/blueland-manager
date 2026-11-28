@@ -125,10 +125,13 @@ function parseChat(text) {
   return input;
 }
 
-function commandRunner({store,community,promotions,readyGuild,pair,bulkRole,now=Date.now}) {
+function commandRunner({store,community,promotions,readyGuild,pair,bulkRole,checkCommandRole,now=Date.now}) {
   const db=store.community;
   return async function run(input) {
     const {action,actor,delivery,channel}=input;
+    // Tickets and request decisions check at the shared dashboard/button/command entry point.
+    if (action!=='ticket' && !(action==='request' && ['approve','reject'].includes(input.sub)))
+      await checkCommandRole?.(actor,input);
     if (action==='bulk-role') {
       const audience=input.audience ?? 'members';
       const bots=audience==='bots';

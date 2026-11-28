@@ -13,3 +13,6 @@
   .guide-controls{margin-top:13px}
   .guide-list{max-height:clamp(9rem,28dvh,15rem);scrollbar-gutter:stable}
 }
+.command-role-form { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:6px 8px; align-items:center; }
+.command-role-form label { grid-column:1/-1; color:var(--guide-muted); }
+.command-role-form select { min-width:0; width:100%; min-height:44px; background:#0a1626; color:var(--ink); border:1px solid #3a536a; border-radius:6px; font:inherit; padding-inline:8px; }

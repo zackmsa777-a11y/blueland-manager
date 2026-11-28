@@ -1,6 +1,7 @@
 'use strict';
 
-const { catalog, RuleError } = require('./ladder');
+const { catalog, RuleError, compareRoles } = require('./ladder');
+const {commandRoleChecker}=require('./command-roles');
 const { createMessageHandler } = require('./chat');
 const { liveDirectory } = require('./directory');
 const { makeService } = require('./promotions');
@@ -59,8 +60,14 @@ function connectDiscord(store, env) {
   }
   const service = makeService(store, { context, change }, allowed);
   const gateway=communityGateway(readyGuild,context);
-  const community=createCommunity(store,gateway,service);
-  const games=createDiscordGames(store.roulette);
+  const checkCommandRole=commandRoleChecker(store.commandRoles,actor=>client.rest.get(api.Routes.guildMember(readyGuild().id,actor)));
+  async function commandRoleOptions() {
+    const guild=readyGuild();
+    const roles=await client.rest.get(api.Routes.guildRoles(guild.id));
+    return roles.filter(r=>r.id!==guild.id && !r.tags?.bot_id).sort(compareRoles).map(({id,name})=>({id,name}));
+  }
+  const community=createCommunity(store,gateway,service,checkCommandRole);
+  const games=createDiscordGames(store.roulette,checkCommandRole);
   async function authorize(id) {
     const ctx = await context(id);
     service.checkOperator(ctx);
@@ -78,12 +85,12 @@ function connectDiscord(store, env) {
   }
   const bulkRole = require('./bulk-role').createBulkRole({readyGuild,
     reservedRole: id => allowed.has(id) || store.community.settings().supportRole === id});
-  const run=commandRunner({store,community,promotions:service,readyGuild,pair,bulkRole});
+  const run=commandRunner({store,community,promotions:service,readyGuild,pair,bulkRole,checkCommandRole});
   const shortcuts=createShortcutHandler({shortcuts:store.shortcuts,context,readyGuild,service,community,run,games,
     lookupTicket:channel=>store.community.ticketByChannel(channel)});
   const tickets=require('./discord-tickets').createDiscordTickets({db:store.community,community,readyGuild});
   const lxrStart=createLxrStart({readyGuild});
-  const applicationManager=createApplicationManager({readyGuild,state:store.applicationRooms,getChannelWriteRest:()=>applicationMutationRest});
+  const applicationManager=createApplicationManager({readyGuild,state:store.applicationRooms,getChannelWriteRest:()=>applicationMutationRest,checkCommandRole});
   const lxrApply=createLxrApply({readyGuild,receipts:store.applications,
     openTicket:createApplicationTickets({readyGuild,getChannelWriteRest:()=>applicationChannelRest,managementState:store.applicationRooms})});
   let lxrApplyReady=false;
@@ -148,7 +155,7 @@ function connectDiscord(store, env) {
         assertGenericScope:gateway.assertGenericScope,
         isTicketRoom:id=>Boolean(store.community.ticketByChannel(id) || store.applicationRooms.read(id))});
       inRole=roster;
-      const onMessage=createMessageHandler({authorize:community.dashboard,service,store,publicOrigin:env.PUBLIC_ORIGIN,run,parse:parseChat,shortcuts,
+      const onMessage=createMessageHandler({authorize:community.dashboard,service,store,publicOrigin:env.PUBLIC_ORIGIN,run,parse:parseChat,shortcuts,checkCommandRole,
         ticketMessages:tickets.text,assertGenericChannel:gateway.assertGenericChannel,inRole:roster,
         applicationResetContext:context,resetApplication:lxrApply.reset,applicationTicketMessages:applicationManager.text});
       const readyTempGuild=()=>{
@@ -305,7 +312,7 @@ function connectDiscord(store, env) {
       return start();
     }
   }
-  return { start, loadLocalConfig, status, authorize, dashboardAccess:community.dashboard, service, community, destinations:gateway.destinations, directory,
+  return { start, loadLocalConfig, status, authorize, dashboardAccess:community.dashboard, service, community, destinations:gateway.destinations, directory,checkCommandRole,commandRoleOptions,
     close() { clearInterval(timer); inRole?.close(); applicationChannelRest=undefined; client?.destroy(); } };
 }
 
